@@ -5,22 +5,23 @@ from pyseobnr.generate_waveform import generate_modes_opt
 from scipy.interpolate import interp1d
 
 
-def eccentric_starting_frequency(f_min: float, e_min: float, M: float, q: float,
+def eccentric_starting_frequency(f_start: float, e_low: float, M: float, q: float,
                                  chi_1: float, chi_2: float) -> float:
     """
     Compute the orbit-averaged starting frequency for gravitational waveform generation
     such that the instantaneous frequency at periastron matches the provided minimum frequency.
 
     Parameters:
-        f_min (float): Minimum instantaneous frequency at periastron (Hz).
-        e (float): Orbital eccentricity.
+        f_start (float): Minimum instantaneous frequency at periastron (Hz).
+        e_low (float): Orbital eccentricity at f_low.
         M (float): Total detector-frame mass of the binary system (in solar masses).
         q (float): Mass ratio (m1/m2 > 1).
         chi_1 (float): Dimensionless spin of the first object.
         chi_2 (float): Dimensionless spin of the second object.
 
     Returns:
-        float: Orbit-averaged starting frequency (Hz).
+        f_low (float): Orbit-averaged starting frequency (Hz).
+        e_start (float): Orbital eccentricity at f_start.
     """
 
     # Compute auxiliary variables
@@ -32,7 +33,7 @@ def eccentric_starting_frequency(f_min: float, e_min: float, M: float, q: float,
     chiA = m_1 * chi_1 - m_2 * chi_2
 
     # Convert frequency to dimensionless frequency
-    omega_avg = f_min * M * lal.MTSUN_SI * np.pi
+    omega_inst = f_start * M * lal.MTSUN_SI * np.pi
 
     # Initialize radiation reaction force object and evolution equations
     RR = RadiationReactionForceEcc()
@@ -51,18 +52,18 @@ def eccentric_starting_frequency(f_min: float, e_min: float, M: float, q: float,
     )
 
     # Compute evolution at z=0 (periastron)
-    evolution.compute(z=0, e=e_min, omega=omega_avg)
+    evolution.compute(z=0, e=e_low, omega=omega_inst)
 
     # Get orbit-averaged omega and convert back to frequency
     omega_avg = evolution.get("xavg_omegainst") ** (3 / 2)
-    f_avg = omega_avg / (M * lal.MTSUN_SI * np.pi)
+    f_low = omega_avg / (M * lal.MTSUN_SI * np.pi)
 
     _, _, model = generate_modes_opt(
         q,
         chi_1,
         chi_2,
         omega_start = omega_avg,
-        eccentricity = e_min,
+        eccentricity = e_low,
         rel_anomaly = 0.0,
         approximant = "SEOBNRv5EHM",
         debug=True,
@@ -72,8 +73,8 @@ def eccentric_starting_frequency(f_min: float, e_min: float, M: float, q: float,
 
     interp_func_e = interp1d(x, e, kind='linear')
 
-    omega_ref = np.pi * f_min * M * lal.MTSUN_SI
-    x_ref = omega_ref**(2/3)
-    e_ref = interp_func_e(x_ref)
+    omega_start = np.pi * f_start * M * lal.MTSUN_SI
+    x_start = omega_start**(2/3)
+    e_start = interp_func_e(x_start)
 
-    return f_avg, e_ref
+    return f_low, e_start
