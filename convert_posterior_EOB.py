@@ -9,16 +9,15 @@ import os
 import argparse
 import pandas as pd
 import lal
-from copy import deepcopy
 from multiprocessing import Pool
-from gw_eccentricity import measure_eccentricity
-from pyseobnr.generate_waveform import GenerateWaveform
-from bilby.gw.conversion import convert_to_lal_binary_black_hole_parameters
+from scipy.interpolate import interp1d
+from pyseobnr.generate_waveform import generate_modes_opt
+
 
 os.environ["OMP_NUM_THREADS"] = "1"
 
 
-def convert_to_egw(
+def convert_to_eEOB(
     q: float,
     chi1: float,
     chi2: float,
@@ -28,47 +27,27 @@ def convert_to_egw(
     f_min: float,
     deltaT: float,
     f_ref: float = 20.0,
-    Mf_ref: float = 0.01,
-    t_back: float = 5000,
-    method: str = "ResidualAmplitude",
+    Mf_ref: float = 0.005,
     debug: bool = False,
 ):
 
-    m1 = q / (1.0 + q) * Mtot
-    m2 = 1.0 / (1.0 + q) * Mtot
+    omega_avg = f_min * Mtot * lal.MTSUN_SI * np.pi
 
-    parameters = {
-        "mass1": m1,
-        "mass2": m2,
-        "spin1z": chi1,
-        "spin2z": chi2,
-        "f22_start": f_min,
-        "eccentricity": eccentricity,
-        "rel_anomaly": rel_anomaly,
-        "approximant": "SEOBNRv5EHM",
-        "return_modes": [(2, 2)],
-        "deltaT": deltaT,
-        "t_backwards": t_back,
-        "lmax_nyquist": 1,
-        "warning_bwd_int": False,
-    }
+    _, _, model = generate_modes_opt(
+        q,
+        chi1,
+        chi2,
+        omega_start = omega_avg,
+        eccentricity = eccentricity,
+        rel_anomaly = rel_anomaly,
+        approximant = "SEOBNRv5EHM",
+        debug=True,
+        settings=dict(return_modes=[(2,2)], dt=deltaT, lmax_nyquist=1)
+    )
+    t, r, phi, pr, pphi, e, z, x, H, Omega = model.dynamics.T
 
-    parameters_qc = deepcopy(parameters)
-    parameters_qc["eccentricity"] = 0.0
-    parameters_qc["f22_start"] = f_min * 0.9
-
-    waveform = GenerateWaveform(parameters)
-    times, modes = waveform.generate_td_modes()
-
-    waveform_qc = GenerateWaveform(parameters_qc)
-    times_qc, modes_qc = waveform_qc.generate_td_modes()
-
-    dataDict = {
-        "t": times,
-        "hlm": {(2, 2): modes[2, 2]},
-        "t_zeroecc": times_qc,
-        "hlm_zeroecc": {(2, 2): modes_qc[2, 2]},
-    }
+    interp_func_e = interp1d(x, e, kind='linear')
+    interp_func_z = interp1d(x, z, kind='linear')
 
     if f_ref is not None and Mf_ref is not None:
         raise ValueError("Specify only one of 'f_ref' or 'Mf_ref', not both.")
@@ -77,28 +56,34 @@ def convert_to_egw(
         raise ValueError("You must specify at least one of 'f_ref' or 'Mf_ref'.")
 
     if f_ref is None and Mf_ref is not None:
-        f_ref = Mf_ref / ((m1 + m2) * lal.MTSUN_SI)
+        f_ref = Mf_ref / (Mtot * lal.MTSUN_SI * np.pi)
 
-    return_dict = measure_eccentricity(
-        fref_in=f_ref,
-        method=method,
-        dataDict=dataDict,
-        num_orbits_to_exclude_before_merger=1,
-        extra_kwargs={"treat_mid_points_between_pericenters_as_apocenters": True},
-    )
 
-    e_gw = return_dict["eccentricity"]
-    mean_anomaly = return_dict["mean_anomaly"]
+    omega_ref = np.pi * f_ref * Mtot * lal.MTSUN_SI
+    x_ref = omega_ref**(2/3)
+    e_ref = interp_func_e(x_ref)
+    zeta_ref = interp_func_z(x_ref)
 
     if debug:
-        gwecc_object = return_dict["gwecc_object"]
-        _, _ = gwecc_object.make_diagnostic_plots()
+        import matplotlib.pyplot as plt
 
-    return e_gw, mean_anomaly
+        plt.plot(x, e)
+        plt.axvline(x=x_ref, color='gray', linestyle='--')
+        plt.scatter([x_ref], [e_ref], color='red')
+        plt.legend()
+        plt.show()
+
+        plt.plot(x, z)
+        plt.axvline(x=x_ref, color='gray', linestyle='--')
+        plt.scatter([x_ref], [zeta_ref], color='red')
+        plt.legend()
+        plt.show()
+
+    return e_ref, np.mod(zeta_ref, 2 * np.pi)
 
 
 if __name__ == "__main__":
-    p = argparse.ArgumentParser(description="Compute e_gw from a bilby result file")
+    p = argparse.ArgumentParser(description="Compute e_EOB from a bilby result file")
     p.add_argument(
         "--result", type=str, help="Bilby result file for an eccentric PE run"
     )
@@ -110,16 +95,7 @@ if __name__ == "__main__":
         "--Mf-ref", type=float, help="Dimensionless reference frequency", default=None
     )
     p.add_argument(
-        "--t-back", type=float, help="Time for backwards integration", default=10000.0
-    )
-    p.add_argument(
         "--srate", type=float, help="Sampling rate in Hz", default=32768
-    )
-    p.add_argument(
-        "--method",
-        type=str,
-        help="gw_eccentricity method",
-        default="ResidualAmplitude",  # ResidualAmplitude AmplitudeFits
     )
     p.add_argument(
         "--filename",
@@ -135,11 +111,11 @@ if __name__ == "__main__":
     f_min = meta["likelihood"]["waveform_arguments"]["minimum_frequency"]
     deltaT = 1 / args.srate
 
-    def convert_to_egw_sample(i):
+    def convert_to_eEOB_sample(i):
         (
             e_gw,
             mean_anomaly,
-        ) = convert_to_egw(
+        ) = convert_to_eEOB(
             1 / pst["mass_ratio"][i],
             pst["chi_1"][i],
             pst["chi_2"][i],
@@ -150,8 +126,6 @@ if __name__ == "__main__":
             deltaT=deltaT,
             f_ref=args.f_ref,
             Mf_ref=args.Mf_ref,
-            t_back=args.t_back,
-            method=args.method,
         )
 
         return e_gw, mean_anomaly
@@ -161,7 +135,7 @@ if __name__ == "__main__":
 
     with Pool(args.n_cpu) as p:
         with tqdm.tqdm(total=len(pst)) as progress:
-            for x, y in p.imap(convert_to_egw_sample, range(len(pst))):
+            for x, y in p.imap(convert_to_eEOB_sample, range(len(pst))):
                 e_gw_pst.append(x)
                 mean_anomaly_pst.append(y)
                 progress.update()
@@ -169,6 +143,6 @@ if __name__ == "__main__":
     e_gw_pst = np.array(e_gw_pst)
     mean_anomaly_pst = np.array(mean_anomaly_pst)
 
-    result.posterior["e_gw"] = e_gw_pst
-    result.posterior["mean_anomaly_gw"] = mean_anomaly_pst
+    result.posterior["e_EOB"] = e_gw_pst
+    result.posterior["mean_anomaly_EOB"] = mean_anomaly_pst
     result.save_to_file(filename=args.filename)
