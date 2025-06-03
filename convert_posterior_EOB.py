@@ -27,7 +27,7 @@ def convert_to_eEOB(
     f_min: float,
     deltaT: float,
     f_ref: float = 20.0,
-    Mf_ref: float = 0.005,
+    Mf_ref: float = 0.01,
     debug: bool = False,
 ):
 
@@ -56,7 +56,7 @@ def convert_to_eEOB(
         raise ValueError("You must specify at least one of 'f_ref' or 'Mf_ref'.")
 
     if f_ref is None and Mf_ref is not None:
-        f_ref = Mf_ref / (Mtot * lal.MTSUN_SI * np.pi)
+        f_ref = Mf_ref / (Mtot * lal.MTSUN_SI)
 
 
     omega_ref = np.pi * f_ref * Mtot * lal.MTSUN_SI

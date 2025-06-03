@@ -77,7 +77,7 @@ def convert_to_egw(
         raise ValueError("You must specify at least one of 'f_ref' or 'Mf_ref'.")
 
     if f_ref is None and Mf_ref is not None:
-        f_ref = Mf_ref / ((m1 + m2) * lal.MTSUN_SI)
+        f_ref = Mf_ref / (Mtot * lal.MTSUN_SI)
 
     return_dict = measure_eccentricity(
         fref_in=f_ref,
