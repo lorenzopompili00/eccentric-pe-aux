@@ -122,7 +122,7 @@ def main():
     SXS_ID = config["SXS_ID"]
     injection_dict = config["injection_dict"]
     debug = config.get("debug", False)
-    output_prefix = config.get("output_prefix", SXS_ID)
+    output_prefix = config.get("output_prefix", SXS_ID.replace(":", "_"))
     channel_suffix = config.get("channel_suffix", "INJECTED")
     sampling_rate = config.get("sampling_rate", 2048.0)
     post_trigger_duration = config.get("post_trigger_duration", 4.0)
