@@ -1,0 +1,27 @@
+# SXS catalog ID for the NR waveform
+SXS_ID: "SXS:BBH:3617"
+
+# Injection parameters
+injection_dict:
+  total_mass: 60.0
+  luminosity_distance: 400.0
+  dec: -0.44
+  ra: 0.05
+  iota: 0.66
+  psi: 3.0
+  phase: 4.3
+  geocent_time: 1126259462.391
+
+# Output settings
+channel_suffix: "INJECTED"
+debug: false
+
+# Waveform parameters
+sampling_rate: 2048.0
+post_trigger_duration: 4.0
+duration: 16.0
+
+# Detector network
+detectors:
+  - H1
+  - L1
