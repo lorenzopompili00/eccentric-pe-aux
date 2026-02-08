@@ -28,6 +28,7 @@ def convert_to_eEOB(
     deltaT: float,
     f_ref: float = 20.0,
     Mf_ref: float = 0.01,
+    approximant: str = "SEOBNRv6EHM",
     debug: bool = False,
 ):
 
@@ -40,7 +41,7 @@ def convert_to_eEOB(
         omega_start = omega_avg,
         eccentricity = eccentricity,
         rel_anomaly = rel_anomaly,
-        approximant = "SEOBNRv5EHM",
+        approximant = approximant,
         debug=True,
         settings=dict(return_modes=[(2,2)], dt=deltaT, lmax_nyquist=1)
     )
@@ -98,10 +99,16 @@ if __name__ == "__main__":
         "--srate", type=float, help="Sampling rate in Hz", default=32768
     )
     p.add_argument(
+        "--approximant",
+        type=str,
+        help="Approximant name",
+        default="SEOBNRv6EHM",
+    )
+    p.add_argument(
         "--filename",
         type=str,
         help="Filename of the posterior",
-        default="egw_converted_result",
+        default="egw_converted_result.hdf5",
     )
     args = p.parse_args()
 
@@ -126,6 +133,7 @@ if __name__ == "__main__":
             deltaT=deltaT,
             f_ref=args.f_ref,
             Mf_ref=args.Mf_ref,
+            approximant=args.approximant,
         )
 
         return e_gw, mean_anomaly

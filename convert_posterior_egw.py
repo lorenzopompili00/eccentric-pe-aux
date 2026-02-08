@@ -31,6 +31,7 @@ def convert_to_egw(
     Mf_ref: float = 0.01,
     t_back: float = 5000,
     method: str = "ResidualAmplitude",
+    approximant: str = "SEOBNRv6EHM",
     debug: bool = False,
 ):
 
@@ -45,7 +46,7 @@ def convert_to_egw(
         "f22_start": f_min,
         "eccentricity": eccentricity,
         "rel_anomaly": rel_anomaly,
-        "approximant": "SEOBNRv5EHM",
+        "approximant": approximant,
         "return_modes": [(2, 2)],
         "deltaT": deltaT,
         "t_backwards": t_back,
@@ -122,10 +123,16 @@ if __name__ == "__main__":
         default="ResidualAmplitude",  # ResidualAmplitude AmplitudeFits
     )
     p.add_argument(
+        "--approximant",
+        type=str,
+        help="Approximant name",
+        default="SEOBNRv6EHM",
+    )
+    p.add_argument(
         "--filename",
         type=str,
         help="Filename of the posterior",
-        default="egw_converted_result",
+        default="egw_converted_result.hdf5",
     )
     args = p.parse_args()
 
@@ -152,6 +159,7 @@ if __name__ == "__main__":
             Mf_ref=args.Mf_ref,
             t_back=args.t_back,
             method=args.method,
+            approximant=args.approximant,
         )
 
         return e_gw, mean_anomaly
