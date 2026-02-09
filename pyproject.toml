@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=45", "setuptools-scm[toml]>=6.2"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "eccentric-pe-aux"
+version = "0.1.0"
+description = "Scripts and utilities for eccentric parameter estimation"
+readme = "README.md"
+requires-python = ">=3.8"
+authors = [
+    {name = "Lorenzo Pompili"},
+]
+
+dependencies = [
+    "numpy",
+    "scipy",
+    "matplotlib",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "ipython",
+    "jupyter",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["eccentric_pe_aux*"]

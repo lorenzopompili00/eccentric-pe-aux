@@ -1,2 +1,3 @@
 # eccentric-pe-aux
-Scripts for eccentric PE
+
+Auxiliary tools and scripts for eccentric parameter estimation (PE) with gravitational wave data.

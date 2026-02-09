@@ -13,7 +13,7 @@ from copy import deepcopy
 from multiprocessing import Pool
 from gw_eccentricity import measure_eccentricity
 from pyseobnr.generate_waveform import GenerateWaveform
-from bilby.gw.conversion import convert_to_lal_binary_black_hole_parameters
+
 
 os.environ["OMP_NUM_THREADS"] = "1"
 
