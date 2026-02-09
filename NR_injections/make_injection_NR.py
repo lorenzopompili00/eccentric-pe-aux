@@ -26,7 +26,10 @@ def hp_hc_NR_phys_units(SXS_ID, injection_dict):
     dl = injection_dict["luminosity_distance"]
 
     wf = sxs.load(SXS_ID)
+    reference_time = wf.metadata.reference_time
     w = wf.h
+    reference_index = w.index_closest_to(reference_time)
+    w = w[reference_index:, :]
     w = w.preprocess()
 
     hpc = 0.0
