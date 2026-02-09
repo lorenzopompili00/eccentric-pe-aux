@@ -30,7 +30,7 @@ def hp_hc_NR_phys_units(SXS_ID, injection_dict):
     w = wf.h
     reference_index = w.index_closest_to(reference_time)
     w = w[reference_index:, :]
-    w = w.preprocess()
+    w = w.preprocess(t1=reference_time, t2=reference_time + 500)
 
     hpc = 0.0
     for ell_m in w.LM:
