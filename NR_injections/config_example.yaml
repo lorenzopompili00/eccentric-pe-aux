@@ -1,6 +1,9 @@
 # SXS catalog ID for the NR waveform
 SXS_ID: "SXS:BBH:3617"
 
+# Time in M units at which the tapering will end
+t_taper: 500 
+
 # Injection parameters
 injection_dict:
   total_mass: 60.0

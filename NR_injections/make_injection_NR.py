@@ -19,7 +19,7 @@ from gwpy.timeseries import TimeSeries
 from pycbc.detector import Detector
 
 
-def hp_hc_NR_phys_units(SXS_ID, injection_dict):
+def hp_hc_NR_phys_units(SXS_ID, injection_dict, t_taper=500):
     """Compute h+ and hx in physical units from NR waveform."""
     iota, phi = injection_dict["iota"], injection_dict["phase"]
     mtot = injection_dict["total_mass"]
@@ -30,7 +30,7 @@ def hp_hc_NR_phys_units(SXS_ID, injection_dict):
     w = wf.h
     reference_index = w.index_closest_to(reference_time)
     w = w[reference_index:, :]
-    w = w.preprocess(t1=reference_time, t2=reference_time + 500)
+    w = w.preprocess(t1=reference_time, t2=reference_time + t_taper)
 
     hpc = 0.0
     for ell_m in w.LM:
@@ -126,6 +126,7 @@ def main():
     injection_dict = config["injection_dict"]
     debug = config.get("debug", False)
     output_prefix = config.get("output_prefix", SXS_ID.replace(":", "_"))
+    t_taper = config.get("t_taper", 500)
     channel_suffix = config.get("channel_suffix", "INJECTED")
     sampling_rate = config.get("sampling_rate", 2048.0)
     post_trigger_duration = config.get("post_trigger_duration", 4.0)
@@ -141,7 +142,7 @@ def main():
     print(f"Detectors: {', '.join(detector_names)}")
 
     # Generate h+ and hx in physical units
-    hp, hc, hpc_times = hp_hc_NR_phys_units(SXS_ID, injection_dict)
+    hp, hc, hpc_times = hp_hc_NR_phys_units(SXS_ID, injection_dict, t_taper=t_taper)
 
     # Compute detector-specific times and strains
     detector_times = {}
