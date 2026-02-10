@@ -44,10 +44,8 @@ def get_f_avg_ref_end(SXS_ID, Mtot, t_taper, debug=False):
     # Cubic spline interpolant for <omega_22>(t)
     omega_22_avg_spline = CubicSpline(t_all, omega_all)
 
-    Mtot = 80.0
-    reference_time = wf.metadata.reference_time
-
     # Evaluate at reference time
+    reference_time = wf.metadata.reference_time
     ref_idx = w.index_closest_to(reference_time)
     t_ref = w.t[ref_idx]
 
