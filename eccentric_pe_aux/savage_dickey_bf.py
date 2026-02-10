@@ -57,7 +57,10 @@ def savage_dickey_bf(
     posterior_samples = np.asarray(posterior_samples)
 
     kde_posterior = bounded_1d_kde(
-        posterior_samples, method=kde_method, bw_method=bw_method, xlow=test_value,
+        posterior_samples,
+        method=kde_method,
+        bw_method=bw_method,
+        xlow=test_value,
     )
     posterior_density = kde_posterior(test_value)[0]
 
@@ -67,7 +70,10 @@ def savage_dickey_bf(
     elif prior_samples is not None:
         prior_samples = np.asarray(prior_samples)
         kde_prior = bounded_1d_kde(
-            prior_samples, method=kde_method, bw_method=bw_method, xlow=test_value,
+            prior_samples,
+            method=kde_method,
+            bw_method=bw_method,
+            xlow=test_value,
         )
         prior_density = kde_prior(test_value)[0]
     else:
@@ -88,7 +94,10 @@ def savage_dickey_bf(
 
         # Evaluate densities
         kde_post_plot = bounded_1d_kde(
-            posterior_samples, method=kde_method, bw_method=bw_method, xlow=test_value,
+            posterior_samples,
+            method=kde_method,
+            bw_method=bw_method,
+            xlow=test_value,
         )
         posterior_densities = kde_post_plot(x_grid)
 
@@ -96,7 +105,10 @@ def savage_dickey_bf(
             prior_densities = np.array([prior_func(x) for x in x_grid])
         else:
             kde_prior_plot = bounded_1d_kde(
-                prior_samples, method=kde_method, bw_method=bw_method, xlow=test_value,
+                prior_samples,
+                method=kde_method,
+                bw_method=bw_method,
+                xlow=test_value,
             )
             prior_densities = kde_prior_plot(x_grid)
 
@@ -160,7 +172,7 @@ def savage_dickey_bf_uncertainty(
     This function provides uncertainty estimates through:
     1. Bootstrap resampling to estimate confidence intervals
     2. Multiple KDE bandwidths
-    
+
     Reports median and confidence intervals.
 
     Parameters
@@ -220,7 +232,10 @@ def savage_dickey_bf_uncertainty(
         for bw_method in bw_methods:
             try:
                 kde_posterior = bounded_1d_kde(
-                    bootstrap_samples, method=kde_method, bw_method=bw_method, xlow=test_value,
+                    bootstrap_samples,
+                    method=kde_method,
+                    bw_method=bw_method,
+                    xlow=test_value,
                 )
                 posterior_density = kde_posterior(test_value)[0]
 
@@ -234,7 +249,10 @@ def savage_dickey_bf_uncertainty(
                     )
                     prior_bootstrap = prior_samples[prior_bootstrap_indices]
                     kde_prior = bounded_1d_kde(
-                        prior_bootstrap, method=kde_method, bw_method=bw_method, xlow=test_value,
+                        prior_bootstrap,
+                        method=kde_method,
+                        bw_method=bw_method,
+                        xlow=test_value,
                     )
                     prior_density = kde_prior(test_value)[0]
 
@@ -295,7 +313,10 @@ def savage_dickey_bf_uncertainty(
         for bw_method in bw_methods:
             try:
                 kde = bounded_1d_kde(
-                    posterior_samples, method=kde_method, bw_method=bw_method, xlow=test_value,
+                    posterior_samples,
+                    method=kde_method,
+                    bw_method=bw_method,
+                    xlow=test_value,
                 )
                 kde_curves.append(kde(x_grid))
             except:
@@ -307,7 +328,9 @@ def savage_dickey_bf_uncertainty(
             kde_lower = np.percentile(kde_curves, 100 * alpha / 2, axis=0)
             kde_upper = np.percentile(kde_curves, 100 * (1 - alpha / 2), axis=0)
 
-            ax1.plot(x_grid, kde_median, "C1", linewidth=2.5, label="Posterior (KDE median)")
+            ax1.plot(
+                x_grid, kde_median, "C1", linewidth=2.5, label="Posterior (KDE median)"
+            )
             ax1.fill_between(
                 x_grid,
                 kde_lower,
@@ -322,7 +345,13 @@ def savage_dickey_bf_uncertainty(
             prior_densities = np.array([prior_func(x) for x in x_grid])
             ax1.plot(x_grid, prior_densities, "C0", linewidth=2.5, label="Prior")
 
-        ax1.axvline(test_value, color="red", linestyle="--", linewidth=2, label=f"Test value = {test_value}")
+        ax1.axvline(
+            test_value,
+            color="red",
+            linestyle="--",
+            linewidth=2,
+            label=f"Test value = {test_value}",
+        )
         ax1.set_xlabel("Eccentricity", fontsize=12)
         ax1.set_ylabel("Density", fontsize=12)
         ax1.set_title("Posterior and Prior Distributions", fontsize=13)
@@ -330,8 +359,20 @@ def savage_dickey_bf_uncertainty(
         ax1.grid(alpha=0.3)
 
         # Plot 2: Bootstrap distribution of log10(BF)
-        ax2.hist(log10_bfs, bins=30, density=True, alpha=0.6, color="purple", edgecolor="black")
-        ax2.axvline(log10_bf_median, color="red", linewidth=2.5, label=f"Median = {log10_bf_median:.2f}")
+        ax2.hist(
+            log10_bfs,
+            bins=30,
+            density=True,
+            alpha=0.6,
+            color="purple",
+            edgecolor="black",
+        )
+        ax2.axvline(
+            log10_bf_median,
+            color="red",
+            linewidth=2.5,
+            label=f"Median = {log10_bf_median:.2f}",
+        )
         ax2.axvline(log10_bf_ci[0], color="red", linewidth=2, linestyle="--", alpha=0.7)
         ax2.axvline(log10_bf_ci[1], color="red", linewidth=2, linestyle="--", alpha=0.7)
         ax2.axvspan(

@@ -16,7 +16,7 @@ def get_f_avg_ref_end(SXS_ID, Mtot, t_taper, debug=False):
     hlm = w[:, w.index(2, 2)]
 
     # Phase and instantaneous omega_22
-    phase_22 = - np.unwrap(np.angle(hlm))
+    phase_22 = -np.unwrap(np.angle(hlm))
     omega_22 = np.gradient(phase_22, w.t)
 
     # Find pericenters (maxima of omega_22) and apocenters (minima)
@@ -75,21 +75,62 @@ def get_f_avg_ref_end(SXS_ID, Mtot, t_taper, debug=False):
         ax.plot(w.t, omega_22, color="C0")
 
         # Pericenter / apocenter markers
-        ax.plot(t_peri, omega_22[idx_peri], "o", color="red", markersize=8, label="Pericenters")
-        ax.plot(t_apo, omega_22[idx_apo], "o", color="olive", markersize=8, label="Apocenters")
+        ax.plot(
+            t_peri,
+            omega_22[idx_peri],
+            "o",
+            color="red",
+            markersize=8,
+            label="Pericenters",
+        )
+        ax.plot(
+            t_apo,
+            omega_22[idx_apo],
+            "o",
+            color="olive",
+            markersize=8,
+            label="Apocenters",
+        )
 
         # Orbit-averaged data points
-        ax.plot(t_avg_peri, omega_avg_peri, "s", color="red", markersize=6, alpha=0.6, label=r"$\langle\omega_{22}\rangle^p_i$")
-        ax.plot(t_avg_apo, omega_avg_apo, "s", color="olive", markersize=6, alpha=0.6, label=r"$\langle\omega_{22}\rangle^a_i$")
+        ax.plot(
+            t_avg_peri,
+            omega_avg_peri,
+            "s",
+            color="red",
+            markersize=6,
+            alpha=0.6,
+            label=r"$\langle\omega_{22}\rangle^p_i$",
+        )
+        ax.plot(
+            t_avg_apo,
+            omega_avg_apo,
+            "s",
+            color="olive",
+            markersize=6,
+            alpha=0.6,
+            label=r"$\langle\omega_{22}\rangle^a_i$",
+        )
 
         # Cubic spline interpolant
         t_dense = np.linspace(t_all[0], t_all[-1], 500)
-        ax.plot(t_dense, omega_22_avg_spline(t_dense), "k--", linewidth=1.5, label=r"$\langle\omega_{22}\rangle(t)$ spline")
+        ax.plot(
+            t_dense,
+            omega_22_avg_spline(t_dense),
+            "k--",
+            linewidth=1.5,
+            label=r"$\langle\omega_{22}\rangle(t)$ spline",
+        )
 
         # Reference time
         ax.axvline(t_ref, color="gray", linestyle="--", alpha=0.7)
-        ax.axhline(omega_22_avg_ref, color="purple", linestyle="--", alpha=0.7,
-                label=rf"$\langle\omega_{{22}}\rangle_\mathrm{{ref}}$ = {omega_22_avg_ref:.4f}")
+        ax.axhline(
+            omega_22_avg_ref,
+            color="purple",
+            linestyle="--",
+            alpha=0.7,
+            label=rf"$\langle\omega_{{22}}\rangle_\mathrm{{ref}}$ = {omega_22_avg_ref:.4f}",
+        )
 
         margin = 500
         ax.set_xlim(t_ref - margin, t_ref + margin)

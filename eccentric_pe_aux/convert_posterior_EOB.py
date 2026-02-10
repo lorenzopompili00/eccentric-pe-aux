@@ -108,7 +108,7 @@ if __name__ == "__main__":
         "--filename",
         type=str,
         help="Filename of the posterior",
-        default="egw_converted_result.hdf5",
+        default="eEOB_converted_result.hdf5",
     )
     args = p.parse_args()
 
