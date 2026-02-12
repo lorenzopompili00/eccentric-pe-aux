@@ -210,14 +210,23 @@ class EccentricityVectorPrior(JointPrior):
 # Waveform generator
 # ---------------------------------------------------------------------------
 
+class _CartesianEccConversion:
+    """Picklable wrapper that prepends the (ecc_x, ecc_y) -> (eccentricity,
+    mean_per_ano) conversion before an existing parameter conversion function.
+    """
+
+    def __init__(self, original_conversion):
+        self.original_conversion = original_conversion
+
+    def __call__(self, parameters):
+        _add_eccentricity_from_cartesian(parameters)
+        return self.original_conversion(parameters)
+
+
 class CartesianEccWaveformGenerator(GWSignalWaveformGenerator):
     """GWSignalWaveformGenerator that accepts (ecc_x, ecc_y) as sampled
     parameters and converts them to (eccentricity, mean_per_ano) before
     calling the waveform model.
-
-    The disk boundary is enforced by the prior (`EccentricityVectorDist`
-    rescale + `Constraint` on eccentricity), so no likelihood-side
-    rejection is needed here.
     """
 
     def __init__(self, **kwargs):
@@ -225,10 +234,5 @@ class CartesianEccWaveformGenerator(GWSignalWaveformGenerator):
         original_conversion = kwargs.pop(
             "parameter_conversion", convert_to_lal_binary_black_hole_parameters
         )
-
-        def _convert_with_cartesian_ecc(parameters):
-            _add_eccentricity_from_cartesian(parameters)
-            return original_conversion(parameters)
-
-        kwargs["parameter_conversion"] = _convert_with_cartesian_ecc
+        kwargs["parameter_conversion"] = _CartesianEccConversion(original_conversion)
         super().__init__(**kwargs)
