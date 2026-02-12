@@ -1,19 +1,24 @@
-import warnings
+"""
+Convert posterior samples from SEOBNRv6EHM (eccentricity, mean_per_ano) to
+GW-eccentricity (e_gw, mean_anomaly) measured at a reference frequency.
 
-warnings.filterwarnings("ignore", "Wswiglal-redir-stdio")
+Can be run as a script: python -m eccentric_pe_aux.convert_posterior_egw --result <file>
+"""
 
-import bilby
-import numpy as np
-import tqdm
-import os
 import argparse
-import pandas as pd
-import lal
+import os
+import warnings
 from copy import deepcopy
 from multiprocessing import Pool
+
+import bilby
+import lal
+import numpy as np
+import tqdm
 from gw_eccentricity import measure_eccentricity
 from pyseobnr.generate_waveform import GenerateWaveform
 
+warnings.filterwarnings("ignore", "Wswiglal-redir-stdio")
 
 os.environ["OMP_NUM_THREADS"] = "1"
 
@@ -34,7 +39,44 @@ def convert_to_egw(
     approximant: str = "SEOBNRv6EHM",
     debug: bool = False,
 ):
+    """Generate an EOB waveform and measure the GW eccentricity at a reference frequency.
 
+    Parameters
+    ----------
+    q : float
+        Mass ratio m1/m2 >= 1.
+    chi1, chi2 : float
+        Aligned spins of the two bodies.
+    eccentricity : float
+        EOB eccentricity at f_min.
+    rel_anomaly : float
+        Relativistic anomaly at f_min.
+    Mtot : float
+        Total detector-frame mass (solar masses).
+    f_min : float
+        Starting GW frequency (Hz).
+    deltaT : float
+        Time step (s).
+    f_ref : float, optional
+        Reference GW frequency (Hz). Specify either f_ref or Mf_ref, not both.
+    Mf_ref : float, optional
+        Dimensionless reference frequency. Specify either f_ref or Mf_ref, not both.
+    t_back : float, optional
+        Duration of backwards integration (M).
+    method : str, optional
+        gw_eccentricity measurement method.
+    approximant : str, optional
+        Waveform approximant name.
+    debug : bool, optional
+        If True, show diagnostic plots from gw_eccentricity.
+
+    Returns
+    -------
+    e_gw : float
+        GW eccentricity at f_ref.
+    mean_anomaly : float
+        Mean anomaly at f_ref.
+    """
     m1 = q / (1.0 + q) * Mtot
     m2 = 1.0 / (1.0 + q) * Mtot
 

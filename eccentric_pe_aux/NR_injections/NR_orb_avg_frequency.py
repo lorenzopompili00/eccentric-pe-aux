@@ -1,3 +1,11 @@
+"""
+Compute the orbit-averaged orbital frequency from an SXS NR waveform.
+
+Used to determine appropriate settings for NR injections.
+* Generate the template waveform from the same frequency as the NR signal at t_ref.
+* Choose the injected mass high enough so that the lower limit of the likelihood integration is after the end of the tapering window.
+"""
+
 import argparse
 import sxs
 import lal
@@ -10,7 +18,32 @@ from .make_injection_NR import load_config
 
 
 def get_f_avg_ref_end(SXS_ID, Mtot, t_taper, debug=False):
+    """Compute the orbit-averaged orbital frequency at the reference time and
+    at the end of the taper window.
 
+    The orbit-averaged omega_22(t) is estimated following the method of https://arxiv.org/abs/2302.11257
+    then evaluated at the SXS reference time and at ``reference_time + t_taper``.
+
+    Parameters
+    ----------
+    SXS_ID : str
+        SXS catalog identifier, e.g. ``"SXS:BBH:1359"``.
+    Mtot : float
+        Total detector-frame mass (solar masses), used to convert to Hz.
+    t_taper : float
+        Taper duration in geometric units (M). The function evaluates the
+        frequency both at the reference time and at ``t_ref + t_taper``.
+    debug : bool, optional
+        If True, save a diagnostic plot of omega_22(t) with pericenter/apocenter
+        markers and the spline fit.
+
+    Returns
+    -------
+    f_orb_avg_ref : float
+        Orbit-averaged orbital frequency at the SXS reference time (Hz).
+    f_orb_avg_end : float
+        Orbit-averaged orbital frequency at ``t_ref + t_taper`` (Hz).
+    """
     wf = sxs.load(SXS_ID)
     w = wf.h
     hlm = w[:, w.index(2, 2)]
@@ -27,7 +60,7 @@ def get_f_avg_ref_end(SXS_ID, Mtot, t_taper, debug=False):
     t_peri, phi_peri = w.t[idx_peri], phase_22[idx_peri]
     t_apo, phi_apo = w.t[idx_apo], phase_22[idx_apo]
 
-    # Orbit-averaged omega_22 from consecutive pericenter pairs (Eq. 12)
+    # Orbit-averaged omega_22 from consecutive pericenter pairs (Eq. 12 of https://arxiv.org/abs/2302.11257)
     t_avg_peri = (t_peri[:-1] + t_peri[1:]) / 2
     omega_avg_peri = (phi_peri[1:] - phi_peri[:-1]) / (t_peri[1:] - t_peri[:-1])
 

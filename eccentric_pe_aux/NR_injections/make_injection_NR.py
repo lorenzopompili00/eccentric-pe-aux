@@ -7,20 +7,40 @@ import argparse
 import warnings
 import yaml
 
-warnings.filterwarnings("ignore", "Wswiglal-redir-stdio")
-
-import numpy as np
-import matplotlib.pyplot as plt
-import sxs
 import lal
-
-from scipy.interpolate import interp1d
+import matplotlib.pyplot as plt
+import numpy as np
+import sxs
 from gwpy.timeseries import TimeSeries
 from pycbc.detector import Detector
+from scipy.interpolate import interp1d
+
+warnings.filterwarnings("ignore", "Wswiglal-redir-stdio")
 
 
 def hp_hc_NR_phys_units(SXS_ID, injection_dict, t_taper=500):
-    """Compute h+ and hx in physical units from NR waveform."""
+    """Load an SXS waveform and return h+, hx in physical units.
+
+    Sums all (ell, m) modes weighted by spin-weighted spherical harmonics,
+    then rescales times and amplitudes from geometric to SI units.
+
+    Parameters
+    ----------
+    SXS_ID : str
+        SXS catalog identifier, e.g. ``"SXS:BBH:1359"``.
+    injection_dict : dict
+        Must contain ``iota``, ``phase``, ``total_mass`` (Msun),
+        ``luminosity_distance`` (Mpc).
+    t_taper : float, optional
+        Duration (in M) over which to apply the start-of-waveform taper.
+
+    Returns
+    -------
+    hp, hc : ndarray
+        Plus and cross polarizations (strain).
+    hpc_times : ndarray
+        Time array (s), zero at peak amplitude.
+    """
     iota, phi = injection_dict["iota"], injection_dict["phase"]
     mtot = injection_dict["total_mass"]
     dl = injection_dict["luminosity_distance"]

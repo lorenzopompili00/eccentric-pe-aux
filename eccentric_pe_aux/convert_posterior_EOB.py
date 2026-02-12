@@ -1,18 +1,23 @@
-import warnings
+"""
+Convert posterior samples for SEOBNRv6EHM (eccentricity, rel_anomaly)
+to a different reference frequency via the model's internal dynamics.
 
-warnings.filterwarnings("ignore", "Wswiglal-redir-stdio")
+Can be run as a script: python -m eccentric_pe_aux.convert_posterior_EOB --result <file>
+"""
+
+import argparse
+import os
+import warnings
+from multiprocessing import Pool
 
 import bilby
+import lal
 import numpy as np
 import tqdm
-import os
-import argparse
-import pandas as pd
-import lal
-from multiprocessing import Pool
-from scipy.interpolate import interp1d
 from pyseobnr.generate_waveform import generate_modes_opt
+from scipy.interpolate import interp1d
 
+warnings.filterwarnings("ignore", "Wswiglal-redir-stdio")
 
 os.environ["OMP_NUM_THREADS"] = "1"
 
@@ -31,7 +36,40 @@ def convert_to_eEOB(
     approximant: str = "SEOBNRv6EHM",
     debug: bool = False,
 ):
+    """Run the EOB model and read off eccentricity and anomaly at a reference frequency.
 
+    Parameters
+    ----------
+    q : float
+        Mass ratio m1/m2 >= 1.
+    chi1, chi2 : float
+        Aligned spins of the two bodies.
+    eccentricity : float
+        EOB eccentricity at f_min.
+    rel_anomaly : float
+        Relativistic anomaly at f_min.
+    Mtot : float
+        Total detector-frame mass (solar masses).
+    f_min : float
+        Starting GW frequency (Hz).
+    deltaT : float
+        Time step (s).
+    f_ref : float, optional
+        Reference GW frequency (Hz). Specify either f_ref or Mf_ref, not both.
+    Mf_ref : float, optional
+        Dimensionless reference frequency. Specify either f_ref or Mf_ref, not both.
+    approximant : str, optional
+        Waveform approximant name.
+    debug : bool, optional
+        If True, plot e(x) and zeta(x) with the reference point marked.
+
+    Returns
+    -------
+    e_ref : float
+        EOB eccentricity at f_ref.
+    zeta_ref : float
+        Relativistic anomaly at f_ref, wrapped to [0, 2π).
+    """
     omega_avg = f_min * Mtot * lal.MTSUN_SI * np.pi
 
     _, _, model = generate_modes_opt(
