@@ -28,3 +28,7 @@ dev = [
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["eccentric_pe_aux*"]
+
+[tool.setuptools.package-data]
+"eccentric_pe_aux.NR_injections" = ["*.yaml"]
+"eccentric_pe_aux.bilby_aux.test" = ["*.prior"]
