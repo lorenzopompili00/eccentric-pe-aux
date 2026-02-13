@@ -150,6 +150,7 @@ def savage_dickey_bf(
         ax.legend(fontsize=11)
         ax.grid(alpha=0.3)
         plt.tight_layout()
+        plt.show()
 
     return log_10_bf
 
@@ -389,5 +390,6 @@ def savage_dickey_bf_uncertainty(
         ax2.grid(alpha=0.3)
 
         plt.tight_layout()
+        plt.show()
 
     return result
