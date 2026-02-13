@@ -192,7 +192,7 @@ def savage_dickey_bf_uncertainty(
         Examples: [0.5, 0.75, 1.0, 1.25, 1.5] or ['scott', 'silverman']
     n_bootstrap : int, default=100
         Number of bootstrap samples
-    confidence_level : float, default=0.95
+    confidence_level : float, default=0.90
         Confidence level for intervals (0 to 1)
     plot : bool, default=False
         If True, plots the results with uncertainty bands
