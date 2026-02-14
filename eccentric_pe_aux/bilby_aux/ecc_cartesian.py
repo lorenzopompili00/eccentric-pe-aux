@@ -12,12 +12,13 @@ EccentricityVectorDist : BaseJointPriorDist
 EccentricityVectorPrior : JointPrior
     Per-parameter wrapper for use in prior files.
 CartesianEccWaveformGenerator : GWSignalWaveformGenerator
-    Waveform generator that converts (ecc_x, ecc_y) -> (eccentricity, mean_per_ano).
-bbh_ecc_cartesian_conversion : callable
-    Prior-dict conversion function that extends the standard BBH conversion
-    with the (ecc_x, ecc_y) -> eccentricity derivation.  Use as
-    `conversion_function` in the prior file so that the `eccentricity`
-    Constraint is evaluated.
+    Waveform generator that sets parameter_conversion to
+    convert_to_cartesian_ecc_bbh_parameters.
+    To be used with parallel_bilby.
+convert_to_cartesian_ecc_bbh_parameters : callable
+    Waveform-generator parameter conversion (params -> (params, added_keys)).
+generate_all_cartesian_ecc_bbh_parameters : callable
+    Post-processing generation function.
 
 Usage in prior file
 -------------------
@@ -27,7 +28,10 @@ Usage in prior file
 
 Usage in config.ini
 -------------------
-    conversion_function = eccentric_pe_aux.bilby_aux.ecc_cartesian.bbh_ecc_cartesian_conversion
+    conversion-function = eccentric_pe_aux.bilby_aux.ecc_cartesian.convert_to_cartesian_ecc_bbh_parameters
+    generation-function = eccentric_pe_aux.bilby_aux.ecc_cartesian.generate_all_cartesian_ecc_bbh_parameters
+
+    # With parallel_bilby, also set the waveform generator to
     waveform-generator = eccentric_pe_aux.bilby_aux.ecc_cartesian.CartesianEccWaveformGenerator
 """
 
@@ -38,42 +42,14 @@ from bilby.core.utils import random
 from bilby.gw.waveform_generator import GWSignalWaveformGenerator
 from bilby.gw.conversion import (
     convert_to_lal_binary_black_hole_parameters,
-    generate_mass_parameters,
+    generate_all_bbh_parameters,
 )
-
-
-# ---------------------------------------------------------------------------
-# Prior-dict conversion function (for Constraint evaluation)
-# ---------------------------------------------------------------------------
-
-def _add_eccentricity_from_cartesian(sample):
-    """Add `eccentricity` and `mean_per_ano` to `sample` in-place."""
-    if "ecc_x" in sample and "ecc_y" in sample:
-        sample["eccentricity"] = np.sqrt(
-            sample["ecc_x"] ** 2 + sample["ecc_y"] ** 2
-        )
-        sample["mean_per_ano"] = np.arctan2(
-            sample["ecc_y"], sample["ecc_x"]
-        ) % (2 * np.pi)
-    return sample
-
-
-def bbh_ecc_cartesian_conversion(sample):
-    """BBH conversion function extended with (ecc_x, ecc_y) -> eccentricity.
-
-    Drop-in replacement for `BBHPriorDict.default_conversion_function`.
-    Suitable for use as `conversion_function` in a `.prior` file so that
-    a `Constraint` on `eccentricity` is properly evaluated.
-    """
-    sample = _add_eccentricity_from_cartesian(sample)
-    sample, _ = convert_to_lal_binary_black_hole_parameters(sample)
-    sample = generate_mass_parameters(sample)
-    return sample
 
 
 # ---------------------------------------------------------------------------
 # Joint prior distribution
 # ---------------------------------------------------------------------------
+
 
 class EccentricityVectorDist(BaseJointPriorDist):
     r"""Joint prior on the Cartesian eccentricity vector (ecc_x, ecc_y).
@@ -84,7 +60,7 @@ class EccentricityVectorDist(BaseJointPriorDist):
       with :math:`p(e) = 1/e_{\max}` (uniform in eccentricity).  The 2-D
       density is :math:`p(e_x, e_y) \propto 1/\sqrt{e_x^2 + e_y^2}`, which
       diverges at the origin but is integrable.
-    
+
     * `flat_in_eccentricity=False` — uniform on the disk.
       The induced 1-D marginal prior on eccentricity is :math:`p(e) \propto e`.
 
@@ -115,7 +91,7 @@ class EccentricityVectorDist(BaseJointPriorDist):
             self._log_norm = -np.log(2 * np.pi * self.ecc_max)
         else:
             # p(ecc_x, ecc_y) = 1/(pi*ecc_max^2) inside disk
-            self._log_norm = -np.log(np.pi * self.ecc_max ** 2)
+            self._log_norm = -np.log(np.pi * self.ecc_max**2)
 
     # -- Rescale: unit hypercube -> disk ------------------------------------
 
@@ -135,9 +111,9 @@ class EccentricityVectorDist(BaseJointPriorDist):
         u2 = samp[:, 1]
 
         if self.flat_in_eccentricity:
-            r = self.ecc_max * u1           # p(r) = 1/ecc_max  => p(e) uniform
+            r = self.ecc_max * u1  # p(r) = 1/ecc_max  => p(e) uniform
         else:
-            r = self.ecc_max * np.sqrt(u1)  # p(r) ~ r          => uniform on disk
+            r = self.ecc_max * np.sqrt(u1)  # p(r) ~ r => uniform on disk
 
         theta = 2 * np.pi * u2
 
@@ -166,8 +142,8 @@ class EccentricityVectorDist(BaseJointPriorDist):
         """
         ex = samp[:, 0]
         ey = samp[:, 1]
-        r_sq = ex ** 2 + ey ** 2
-        in_disk = r_sq <= self.ecc_max ** 2
+        r_sq = ex**2 + ey**2
+        in_disk = r_sq <= self.ecc_max**2
 
         if self.flat_in_eccentricity:
             # p = 1/(2*pi*ecc_max * r)  =>  ln p = _log_norm - 0.5*ln(r^2)
@@ -184,6 +160,7 @@ class EccentricityVectorDist(BaseJointPriorDist):
 # ---------------------------------------------------------------------------
 # Per-parameter JointPrior wrapper
 # ---------------------------------------------------------------------------
+
 
 class EccentricityVectorPrior(JointPrior):
     """Single-parameter prior for one component of the eccentricity vector.
@@ -207,32 +184,90 @@ class EccentricityVectorPrior(JointPrior):
 
 
 # ---------------------------------------------------------------------------
-# Waveform generator
+# Waveform-generator conversion and post-processing generation functions
 # ---------------------------------------------------------------------------
 
-class _CartesianEccConversion:
-    """Picklable wrapper that prepends the (ecc_x, ecc_y) -> (eccentricity,
-    mean_per_ano) conversion before an existing parameter conversion function.
+
+def _generate_cartesian_ecc_parameters(sample, added_keys=None):
+    """Derive (eccentricity, mean_per_ano) from (ecc_x, ecc_y).
+
+    Parameters
+    ----------
+    sample : dict
+    added_keys : list, optional
+
+    Returns
+    -------
+    sample : dict
+    added_keys : list
     """
+    if added_keys is None:
+        added_keys = []
+    if "ecc_x" in sample and "ecc_y" in sample:
+        if "eccentricity" not in sample:
+            sample["eccentricity"] = np.sqrt(
+                sample["ecc_x"] ** 2 + sample["ecc_y"] ** 2
+            )
+            added_keys = added_keys + ["eccentricity"]
+        if "mean_per_ano" not in sample:
+            sample["mean_per_ano"] = np.arctan2(sample["ecc_y"], sample["ecc_x"]) % (
+                2 * np.pi
+            )
+            added_keys = added_keys + ["mean_per_ano"]
+    return sample, added_keys
 
-    def __init__(self, original_conversion):
-        self.original_conversion = original_conversion
 
-    def __call__(self, parameters):
-        _add_eccentricity_from_cartesian(parameters)
-        return self.original_conversion(parameters)
+def convert_to_cartesian_ecc_bbh_parameters(parameters):
+    """Convert parameters for a Cartesian-eccentricity BBH waveform.
+
+    Prepends the (ecc_x, ecc_y) -> (eccentricity, mean_per_ano) conversion
+    before the standard LAL BBH conversion.
+
+    Parameters
+    ----------
+    parameters : dict
+
+    Returns
+    -------
+    converted_parameters : dict
+    added_keys : list
+    """
+    converted_parameters, added_keys = convert_to_lal_binary_black_hole_parameters(
+        parameters
+    )
+    converted_parameters, added_keys = _generate_cartesian_ecc_parameters(
+        converted_parameters, added_keys
+    )
+    return converted_parameters, added_keys
+
+
+def generate_all_cartesian_ecc_bbh_parameters(
+    sample, likelihood=None, priors=None, npool=1
+):
+    """Fill in all missing BBH parameters including Cartesian eccentricity.
+
+    Wraps :func:`bilby.gw.conversion.generate_all_bbh_parameters` and adds
+    the (ecc_x, ecc_y) <-> (eccentricity, mean_per_ano) derivation.
+
+    Parameters
+    ----------
+    sample : dict or pandas.DataFrame
+    likelihood : bilby.gw.likelihood.GravitationalWaveTransient, optional
+    priors : dict, optional
+    npool : int, optional
+    """
+    output_sample = generate_all_bbh_parameters(sample, likelihood, priors, npool)
+    output_sample, _ = _generate_cartesian_ecc_parameters(output_sample)
+    return output_sample
 
 
 class CartesianEccWaveformGenerator(GWSignalWaveformGenerator):
     """GWSignalWaveformGenerator that accepts (ecc_x, ecc_y) as sampled
     parameters and converts them to (eccentricity, mean_per_ano) before
-    calling the waveform model.
+    calling the waveform model. To be used with parallel_bilby, which has 
+    some issues with custom conversion functions.
     """
 
     def __init__(self, **kwargs):
-        # Wrap whatever conversion function was requested (or the default)
-        original_conversion = kwargs.pop(
-            "parameter_conversion", convert_to_lal_binary_black_hole_parameters
-        )
-        kwargs["parameter_conversion"] = _CartesianEccConversion(original_conversion)
+        kwargs["parameter_conversion"] = convert_to_cartesian_ecc_bbh_parameters
         super().__init__(**kwargs)

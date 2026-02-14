@@ -8,12 +8,14 @@ from .ecc_cartesian import (
     EccentricityVectorDist,
     EccentricityVectorPrior,
     CartesianEccWaveformGenerator,
-    bbh_ecc_cartesian_conversion,
+    convert_to_cartesian_ecc_bbh_parameters,
+    generate_all_cartesian_ecc_bbh_parameters,
 )
 
 __all__ = [
     "EccentricityVectorDist",
     "EccentricityVectorPrior",
     "CartesianEccWaveformGenerator",
-    "bbh_ecc_cartesian_conversion",
+    "convert_to_cartesian_ecc_bbh_parameters",
+    "generate_all_cartesian_ecc_bbh_parameters",
 ]
