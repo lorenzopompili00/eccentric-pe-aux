@@ -178,8 +178,7 @@ if __name__ == "__main__":
     )
     p.add_argument(
         "--return-failures-as-nan",
-        type=bool,
-        default=False,
+        action="store_true",
         help="If set, samples that fail to convert will be set to NaN",
     )
     args = p.parse_args()
