@@ -153,10 +153,10 @@ if __name__ == "__main__":
         "--Mf-ref", type=float, help="Dimensionless reference frequency", default=None
     )
     p.add_argument(
-        "--t-back", type=float, help="Time for backwards integration", default=10000.0
+        "--t-back", type=float, help="Time for backwards integration", default=20000.0
     )
     p.add_argument(
-        "--srate", type=float, help="Sampling rate in Hz", default=32768
+        "--srate", type=float, help="Sampling rate in Hz", default=16384.0
     )
     p.add_argument(
         "--method",
@@ -176,45 +176,71 @@ if __name__ == "__main__":
         help="Filename of the posterior",
         default="egw_converted_result.hdf5",
     )
+    p.add_argument(
+        "--return-failures-as-nan",
+        type=bool,
+        default=False,
+        help="If set, samples that fail to convert will be set to NaN",
+    )
     args = p.parse_args()
 
     result = bilby.read_in_result(args.result)
     pst = result.posterior
     meta = result.meta_data
     f_min = meta["likelihood"]["waveform_arguments"]["minimum_frequency"]
+
+    print(f"f_min = {f_min} Hz")
+
+    if args.f_ref is not None:
+        print(f"Reference frequency f_ref = {args.f_ref} Hz")
+
+    if args.Mf_ref is not None:
+        print(f"Dimensionless reference frequency Mf_ref = {args.Mf_ref}")
+
     deltaT = 1 / args.srate
 
     def convert_to_egw_sample(i):
-        (
-            e_gw,
-            mean_anomaly,
-        ) = convert_to_egw(
-            1 / pst["mass_ratio"][i],
-            pst["chi_1"][i],
-            pst["chi_2"][i],
-            pst["eccentricity"][i],
-            pst["mean_per_ano"][i],
-            pst["mass_1"][i] + pst["mass_2"][i],
-            f_min=f_min,
-            deltaT=deltaT,
-            f_ref=args.f_ref,
-            Mf_ref=args.Mf_ref,
-            t_back=args.t_back,
-            method=args.method,
-            approximant=args.approximant,
-        )
-
-        return e_gw, mean_anomaly
+        try:
+            (
+                e_gw,
+                mean_anomaly,
+            ) = convert_to_egw(
+                1 / pst["mass_ratio"][i],
+                pst["chi_1"][i],
+                pst["chi_2"][i],
+                pst["eccentricity"][i],
+                pst["mean_per_ano"][i],
+                pst["mass_1"][i] + pst["mass_2"][i],
+                f_min=f_min,
+                deltaT=deltaT,
+                f_ref=args.f_ref,
+                Mf_ref=args.Mf_ref,
+                t_back=args.t_back,
+                method=args.method,
+                approximant=args.approximant,
+            )
+            return e_gw, mean_anomaly
+        except Exception:
+            return np.nan, np.nan
 
     e_gw_pst = []
     mean_anomaly_pst = []
+    n_failed = 0
 
-    with Pool(args.n_cpu) as p:
+    with Pool(args.n_cpu) as pool:
         with tqdm.tqdm(total=len(pst)) as progress:
-            for x, y in p.imap(convert_to_egw_sample, range(len(pst))):
-                e_gw_pst.append(x)
-                mean_anomaly_pst.append(y)
+            for x, y in pool.imap(convert_to_egw_sample, range(len(pst))):
+                if np.isnan(x):
+                    n_failed += 1
+                    if args.return_failures_as_nan:
+                        e_gw_pst.append(x)
+                        mean_anomaly_pst.append(y)
+                else:
+                    e_gw_pst.append(x)
+                    mean_anomaly_pst.append(y)
                 progress.update()
+
+    print(f"\n{n_failed}/{len(pst)} samples failed ({100*n_failed/len(pst):.1f}%)")
 
     e_gw_pst = np.array(e_gw_pst)
     mean_anomaly_pst = np.array(mean_anomaly_pst)
