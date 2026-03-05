@@ -1,7 +1,8 @@
 """
 Bilby auxiliary tools for eccentric PE.
 
-Provides Cartesian eccentricity vector parameterization for bilby.
+Provides Cartesian eccentricity vector parameterization for bilby
+and a hyperbolic waveform generator.
 """
 
 from .ecc_cartesian import (
@@ -11,6 +12,7 @@ from .ecc_cartesian import (
     convert_to_cartesian_ecc_bbh_parameters,
     generate_all_cartesian_ecc_bbh_parameters,
 )
+from .hyperbolic import HyperbolicGWSignalWaveformGenerator
 
 __all__ = [
     "EccentricityVectorDist",
@@ -18,4 +20,5 @@ __all__ = [
     "CartesianEccWaveformGenerator",
     "convert_to_cartesian_ecc_bbh_parameters",
     "generate_all_cartesian_ecc_bbh_parameters",
+    "HyperbolicGWSignalWaveformGenerator",
 ]
