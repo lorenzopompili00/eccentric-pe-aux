@@ -6,6 +6,7 @@ Can be run as a script: python -m eccentric_pe_aux.convert_posterior_egw --resul
 """
 
 import argparse
+import json
 import os
 import warnings
 from copy import deepcopy
@@ -37,6 +38,8 @@ def convert_to_egw(
     t_back: float = 1000,
     method: str = "ResidualAmplitude",
     approximant: str = "SEOBNRv6EHM",
+    num_orbits_to_exclude_before_merger: int = 1,
+    extra_kwargs: dict | None = None,
     debug: bool = False,
 ):
     """Generate an EOB waveform and measure the GW eccentricity at a reference frequency.
@@ -67,6 +70,10 @@ def convert_to_egw(
         gw_eccentricity measurement method.
     approximant : str, optional
         Waveform approximant name.
+    num_orbits_to_exclude_before_merger : int, optional
+        Number of orbits to exclude before merger in gw_eccentricity.
+    extra_kwargs : dict or None, optional
+        Extra keyword arguments passed to gw_eccentricity.measure_eccentricity.
     debug : bool, optional
         If True, show diagnostic plots from gw_eccentricity.
 
@@ -122,12 +129,15 @@ def convert_to_egw(
     if f_ref is None and Mf_ref is not None:
         f_ref = Mf_ref / (Mtot * lal.MTSUN_SI)
 
+    if extra_kwargs is None:
+        extra_kwargs = {"treat_mid_points_between_pericenters_as_apocenters": True}
+
     return_dict = measure_eccentricity(
         fref_in=f_ref,
         method=method,
         dataDict=dataDict,
-        num_orbits_to_exclude_before_merger=1,
-        extra_kwargs={"treat_mid_points_between_pericenters_as_apocenters": True},
+        num_orbits_to_exclude_before_merger=num_orbits_to_exclude_before_merger,
+        extra_kwargs=extra_kwargs,
     )
 
     e_gw = return_dict["eccentricity"]
@@ -177,6 +187,24 @@ if __name__ == "__main__":
         default="egw_converted_result.hdf5",
     )
     p.add_argument(
+        "--num-orbits-to-exclude-before-merger",
+        type=int,
+        help="Number of orbits to exclude before merger in gw_eccentricity",
+        default=1,
+    )
+    p.add_argument(
+        "--extra-kwargs",
+        type=str,
+        help="JSON string of extra kwargs for gw_eccentricity.measure_eccentricity",
+        default=None,
+    )
+    p.add_argument(
+        "--n-samples",
+        type=int,
+        help="Number of randomly drawn samples to convert (default: all)",
+        default=None,
+    )
+    p.add_argument(
         "--return-failures-as-nan",
         action="store_true",
         help="If set, samples that fail to convert will be set to NaN",
@@ -187,6 +215,11 @@ if __name__ == "__main__":
     pst = result.posterior
     meta = result.meta_data
     f_min = meta["likelihood"]["waveform_arguments"]["minimum_frequency"]
+
+    if args.n_samples is not None and args.n_samples < len(pst):
+        idx = np.random.choice(len(pst), size=args.n_samples, replace=False)
+        pst = pst.iloc[idx].reset_index(drop=True)
+        print(f"Randomly selected {args.n_samples} / {len(result.posterior)} samples")
 
     print(f"f_min = {f_min} Hz")
 
@@ -217,6 +250,8 @@ if __name__ == "__main__":
                 t_back=args.t_back,
                 method=args.method,
                 approximant=args.approximant,
+                num_orbits_to_exclude_before_merger=args.num_orbits_to_exclude_before_merger,
+                extra_kwargs=json.loads(args.extra_kwargs) if args.extra_kwargs else None,
             )
             return e_gw, mean_anomaly
         except Exception:
@@ -240,6 +275,11 @@ if __name__ == "__main__":
                 progress.update()
 
     print(f"\n{n_failed}/{len(pst)} samples failed ({100*n_failed/len(pst):.1f}%)")
+
+    if n_failed / len(pst) > 0.5:
+        raise RuntimeError(
+            "More than 50% of samples failed to convert. Check the conversion settings."
+        ) 
 
     e_gw_pst = np.array(e_gw_pst)
     mean_anomaly_pst = np.array(mean_anomaly_pst)
