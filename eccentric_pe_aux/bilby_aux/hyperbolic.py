@@ -17,6 +17,9 @@ class HyperbolicGWSignalWaveformGenerator(GWSignalWaveformGenerator):
 
     When ``hyperbolic=True`` the parameters ``energy`` and ``momentum`` are
     included in the sampled parameter set.
+
+    TODO: in this case the waveform is not initialized at a given frequency,
+    but at a given separation. To be implemented.
     """
 
     _hyperbolic_parameters = {
