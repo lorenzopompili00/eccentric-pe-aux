@@ -12,12 +12,14 @@ import warnings
 from copy import deepcopy
 from multiprocessing import Pool
 
+import astropy.units as u
 import bilby
 import lal
 import numpy as np
 import tqdm
 from gw_eccentricity import measure_eccentricity
 from pyseobnr.generate_waveform import GenerateWaveform
+from lalsimulation.gwsignal import gwsignal_get_waveform_generator
 
 warnings.filterwarnings("ignore", "Wswiglal-redir-stdio")
 
@@ -87,37 +89,65 @@ def convert_to_egw(
     m1 = q / (1.0 + q) * Mtot
     m2 = 1.0 / (1.0 + q) * Mtot
 
-    parameters = {
-        "mass1": m1,
-        "mass2": m2,
-        "spin1z": chi1,
-        "spin2z": chi2,
-        "f22_start": f_min,
-        "eccentricity": eccentricity,
-        "rel_anomaly": rel_anomaly,
-        "approximant": approximant,
-        "return_modes": [(2, 2)],
-        "deltaT": deltaT,
-        "t_backwards": t_back,
-        "lmax_nyquist": 1,
-        "warning_bwd_int": False,
-    }
+    if approximant == 'TEOBResumSDALI':
 
-    parameters_qc = deepcopy(parameters)
-    parameters_qc["eccentricity"] = 0.0
-    parameters_qc["f22_start"] = f_min * 0.9
+        parameters = {
+            "mass1": m1 * u.solMass,
+            "mass2": m2 * u.solMass,
+            "spin1z": chi1 * u.dimensionless_unscaled,
+            "spin2z": chi2 * u.dimensionless_unscaled,
+            "f22_start": f_min * u.Hz,
+            "eccentricity": eccentricity * u.dimensionless_unscaled,
+            "meanPerAno": rel_anomaly * u.rad,
+            "ModeArray": [(2, 2)],
+            "deltaT": deltaT * u.s,
+        }
 
-    waveform = GenerateWaveform(parameters)
-    times, modes = waveform.generate_td_modes()
+        parameters_qc = deepcopy(parameters)
+        parameters_qc["eccentricity"] = 0.0 * u.dimensionless_unscaled
+        parameters_qc["f22_start"] = f_min * 0.9 * u.Hz
 
-    waveform_qc = GenerateWaveform(parameters_qc)
-    times_qc, modes_qc = waveform_qc.generate_td_modes()
+        gen = gwsignal_get_waveform_generator(approximant)
+        modes = gen.generate_td_modes(**parameters)
+        times = np.array(modes[2, 2].times)
+
+        gen_qc = gwsignal_get_waveform_generator(approximant)
+        modes_qc = gen_qc.generate_td_modes(**parameters_qc)
+        times_qc = np.array(modes_qc[2, 2].times)
+
+    else:
+
+        parameters = {
+            "mass1": m1,
+            "mass2": m2,
+            "spin1z": chi1,
+            "spin2z": chi2,
+            "f22_start": f_min,
+            "eccentricity": eccentricity,
+            "rel_anomaly": rel_anomaly,
+            "approximant": approximant,
+            "return_modes": [(2, 2)],
+            "deltaT": deltaT,
+            "t_backwards": t_back,
+            "lmax_nyquist": 1,
+            "warning_bwd_int": False,
+        }
+
+        parameters_qc = deepcopy(parameters)
+        parameters_qc["eccentricity"] = 0.0
+        parameters_qc["f22_start"] = f_min * 0.9
+
+        waveform = GenerateWaveform(parameters)
+        times, modes = waveform.generate_td_modes()
+
+        waveform_qc = GenerateWaveform(parameters_qc)
+        times_qc, modes_qc = waveform_qc.generate_td_modes()
 
     dataDict = {
         "t": times,
-        "hlm": {(2, 2): modes[2, 2]},
+        "hlm": {(2, 2): np.array(modes[2, 2])},
         "t_zeroecc": times_qc,
-        "hlm_zeroecc": {(2, 2): modes_qc[2, 2]},
+        "hlm_zeroecc": {(2, 2): np.array(modes_qc[2, 2])},
     }
 
     if f_ref is not None and Mf_ref is not None:
@@ -230,6 +260,10 @@ if __name__ == "__main__":
         print(f"Dimensionless reference frequency Mf_ref = {args.Mf_ref}")
 
     deltaT = 1 / args.srate
+
+    if args.t_back > 0 and args.approximant in ["TEOBResumSDALI"]:
+        print("Warning: Backwards integration is not currently implemented for TEOBResumSDALI. Setting t_back to 0.")
+        args.t_back = 0.0
 
     def convert_to_egw_sample(i):
         try:
