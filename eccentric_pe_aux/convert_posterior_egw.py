@@ -265,31 +265,40 @@ if __name__ == "__main__":
         print("Warning: Backwards integration is not currently implemented for TEOBResumSDALI. Setting t_back to 0.")
         args.t_back = 0.0
 
+    ALL_METHODS = [
+        "ResidualAmplitude",
+        "AmplitudeFits",
+        "ResidualFrequency",
+        "FrequencyFits",
+        "Amplitude",
+        "Frequency",
+    ]
+
     def convert_to_egw_sample(i):
-        try:
-            (
-                e_gw,
-                mean_anomaly,
-            ) = convert_to_egw(
-                1 / pst["mass_ratio"][i],
-                pst["chi_1"][i],
-                pst["chi_2"][i],
-                pst["eccentricity"][i],
-                pst["mean_per_ano"][i],
-                pst["mass_1"][i] + pst["mass_2"][i],
-                f_min=f_min,
-                deltaT=deltaT,
-                f_ref=args.f_ref,
-                Mf_ref=args.Mf_ref,
-                t_back=args.t_back,
-                method=args.method,
-                approximant=args.approximant,
-                num_orbits_to_exclude_before_merger=args.num_orbits_to_exclude_before_merger,
-                extra_kwargs=json.loads(args.extra_kwargs) if args.extra_kwargs else None,
-            )
-            return e_gw, mean_anomaly
-        except Exception:
-            return np.nan, np.nan
+        methods_to_try = [args.method] + [m for m in ALL_METHODS if m != args.method]
+        for method in methods_to_try:
+            try:
+                e_gw, mean_anomaly = convert_to_egw(
+                    1 / pst["mass_ratio"][i],
+                    pst["chi_1"][i],
+                    pst["chi_2"][i],
+                    pst["eccentricity"][i],
+                    pst["mean_per_ano"][i],
+                    pst["mass_1"][i] + pst["mass_2"][i],
+                    f_min=f_min,
+                    deltaT=deltaT,
+                    f_ref=args.f_ref,
+                    Mf_ref=args.Mf_ref,
+                    t_back=args.t_back,
+                    method=method,
+                    approximant=args.approximant,
+                    num_orbits_to_exclude_before_merger=args.num_orbits_to_exclude_before_merger,
+                    extra_kwargs=json.loads(args.extra_kwargs) if args.extra_kwargs else None,
+                )
+                return e_gw, mean_anomaly
+            except Exception:
+                continue
+        return np.nan, np.nan
 
     e_gw_pst = []
     mean_anomaly_pst = []
