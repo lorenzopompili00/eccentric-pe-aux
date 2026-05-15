@@ -65,10 +65,11 @@ class HyperbolicGWSignalWaveformGenerator(GWSignalWaveformGenerator):
         return gwsignal_get_waveform_generator(waveform_approximant)
 
     def _from_bilby_parameters(self, **parameters):
-        gwsignal_dict = super()._from_bilby_parameters(**parameters)
 
         if "delta_energy" in parameters and "energy" not in parameters:
             parameters["energy"] = 1.0 + parameters["delta_energy"]
+
+        gwsignal_dict = super()._from_bilby_parameters(**parameters)
 
         gwsignal_dict["energy"] = parameters["energy"]
         gwsignal_dict["momentum"] = parameters["momentum"]
