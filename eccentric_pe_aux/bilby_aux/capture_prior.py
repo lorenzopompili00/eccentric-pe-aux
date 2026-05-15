@@ -110,6 +110,11 @@ class CaptureEnergyPrior(ConditionalGamma):
             name=name, latex_label=latex_label, unit=unit, boundary=boundary,
             k=float(k), theta=1.0,
         )
+        # bilby's conditional_prior_factory rewrites __name__/__qualname__ to
+        # "ConditionalGamma" at instantiation; restore them so pickle (used by
+        # bilby_pipe's data dump) resolves the class back to this subclass.
+        type(self).__name__ = "CaptureEnergyPrior"
+        type(self).__qualname__ = "CaptureEnergyPrior"
 
     def __repr__(self):
         # Clean, prior-file-round-trippable repr (condition_func is implicit).
@@ -141,6 +146,10 @@ class CaptureMomentumPrior(ConditionalPowerLaw):
             name=name, latex_label=latex_label, unit=unit, boundary=boundary,
             alpha=1.0, minimum=float(minimum), maximum=1.0,
         )
+        # See CaptureEnergyPrior: restore the name mangled by the factory so
+        # the instance is picklable by reference (bilby_pipe data dump).
+        type(self).__name__ = "CaptureMomentumPrior"
+        type(self).__qualname__ = "CaptureMomentumPrior"
 
     def __repr__(self):
         # Clean, prior-file-round-trippable repr (alpha=1 and the dynamic
