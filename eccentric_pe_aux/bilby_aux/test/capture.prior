@@ -1,0 +1,7 @@
+sigma = Uniform(name='sigma', minimum=1.0, maximum=1000.0, latex_label='$\\sigma$')
+chirp_mass = bilby.gw.prior.UniformInComponentsChirpMass(name='chirp_mass', minimum=40.0, maximum=200.0, unit='$M_{\\odot}$')
+mass_ratio = bilby.gw.prior.UniformInComponentsMassRatio(name='mass_ratio', minimum=0.125, maximum=1.0)
+mass_1 = Constraint(name='mass_1', minimum=1, maximum=1000)
+mass_2 = Constraint(name='mass_2', minimum=1, maximum=1000)
+delta_energy = eccentric_pe_aux.bilby_aux.capture_prior.CaptureEnergyPrior(name='delta_energy')
+momentum = eccentric_pe_aux.bilby_aux.capture_prior.CaptureMomentumPrior(name='momentum')
