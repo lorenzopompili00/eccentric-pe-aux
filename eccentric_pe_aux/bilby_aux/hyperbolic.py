@@ -66,6 +66,10 @@ class HyperbolicGWSignalWaveformGenerator(GWSignalWaveformGenerator):
 
     def _from_bilby_parameters(self, **parameters):
         gwsignal_dict = super()._from_bilby_parameters(**parameters)
+
+        if "delta_energy" in parameters and "energy" not in parameters:
+            parameters["energy"] = 1.0 + parameters["delta_energy"]
+
         gwsignal_dict["energy"] = parameters["energy"]
         gwsignal_dict["momentum"] = parameters["momentum"]
         gwsignal_dict["separation"] = parameters["separation"]
