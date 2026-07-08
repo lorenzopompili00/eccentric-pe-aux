@@ -1,6 +1,8 @@
 """
-Convert posterior samples from SEOBNRv6EHM (eccentricity, mean_per_ano) to
-GW-eccentricity (e_gw, mean_anomaly) measured at a reference frequency.
+Convert posterior samples from an eccentric EOB run (eccentricity, mean_per_ano)
+to GW-eccentricity (e_gw, mean_anomaly) measured at a reference frequency.
+Supports both aligned-spin (e.g. SEOBNRv6EHM) and eccentric-precessing
+(SEOBNRv6EPHM) approximants.
 
 Can be run as a script: python -m eccentric_pe_aux.convert_posterior_egw --result <file>
 """
@@ -17,6 +19,7 @@ import bilby
 import lal
 import numpy as np
 import tqdm
+from bilby.gw.conversion import bilby_to_lalsimulation_spins
 from gw_eccentricity import measure_eccentricity
 from pyseobnr.generate_waveform import GenerateWaveform
 from lalsimulation.gwsignal import gwsignal_get_waveform_generator
@@ -25,11 +28,18 @@ warnings.filterwarnings("ignore", "Wswiglal-redir-stdio")
 
 os.environ["OMP_NUM_THREADS"] = "1"
 
+PRECESSING_APPROXIMANTS = ["SEOBNRv6EPHM"]
+
+# Extra backward integration (units of M) added to the zero-ecc reference in the
+# precessing case, where we cannot lower f22_start to give it a low-frequency
+# margin (that would move f_ref and hence the spins).
+PREC_QC_EXTRA_TBACK = 2000.0
+
 
 def convert_to_egw(
     q: float,
-    chi1: float,
-    chi2: float,
+    chi1,
+    chi2,
     eccentricity: float,
     rel_anomaly: float,
     Mtot: float,
@@ -40,6 +50,7 @@ def convert_to_egw(
     t_back: float = 1000,
     method: str = "ResidualAmplitude",
     approximant: str = "SEOBNRv6EHM",
+    precessing: bool = False,
     num_orbits_to_exclude_before_merger: int = 1,
     extra_kwargs: dict | None = None,
     debug: bool = False,
@@ -50,8 +61,10 @@ def convert_to_egw(
     ----------
     q : float
         Mass ratio m1/m2 >= 1.
-    chi1, chi2 : float
-        Aligned spins of the two bodies.
+    chi1, chi2 : float or array_like
+        Spins of the two bodies. Aligned-spin (scalar, z-component) unless
+        ``precessing`` is True, in which case each is the Cartesian spin
+        vector ``[sx, sy, sz]`` defined at ``f_min``.
     eccentricity : float
         EOB eccentricity at f_min.
     rel_anomaly : float
@@ -72,6 +85,10 @@ def convert_to_egw(
         gw_eccentricity measurement method.
     approximant : str, optional
         Waveform approximant name.
+    precessing : bool, optional
+        If True, ``chi1``/``chi2`` are Cartesian spin vectors, all ell=2 modes
+        are generated, and the eccentricity is measured from the coprecessing
+        frame modes (``measure_eccentricity(..., precessing=True)``).
     num_orbits_to_exclude_before_merger : int, optional
         Number of orbits to exclude before merger in gw_eccentricity.
     extra_kwargs : dict or None, optional
@@ -117,16 +134,26 @@ def convert_to_egw(
 
     else:
 
+        if precessing:
+            spin_params = {
+                "spin1x": chi1[0], "spin1y": chi1[1], "spin1z": chi1[2],
+                "spin2x": chi2[0], "spin2y": chi2[1], "spin2z": chi2[2],
+            }
+            # ell=2 coprecessing modes needed for the full inertial ell=2 set
+            return_modes = [(2, 2), (2, 1)]
+        else:
+            spin_params = {"spin1z": chi1, "spin2z": chi2}
+            return_modes = [(2, 2)]
+
         parameters = {
             "mass1": m1,
             "mass2": m2,
-            "spin1z": chi1,
-            "spin2z": chi2,
+            **spin_params,
             "f22_start": f_min,
             "eccentricity": eccentricity,
             "rel_anomaly": rel_anomaly,
             "approximant": approximant,
-            "return_modes": [(2, 2)],
+            "return_modes": return_modes,
             "deltaT": deltaT,
             "t_backwards": t_back,
             "lmax_nyquist": 1,
@@ -135,7 +162,15 @@ def convert_to_egw(
 
         parameters_qc = deepcopy(parameters)
         parameters_qc["eccentricity"] = 0.0
-        parameters_qc["f22_start"] = f_min * 0.9
+        if precessing:
+            # We cannot lower f22_start here: eccentric approximants require
+            # f_ref == f22_start, and the spins are defined at f_ref, so that
+            # would make the zero-ecc reference a system with different spins. 
+            # We add a bit more backward integration instead so the
+            # reference still spans the eccentric waveform.
+            parameters_qc["t_backwards"] = t_back + PREC_QC_EXTRA_TBACK
+        else:
+            parameters_qc["f22_start"] = f_min * 0.9
 
         waveform = GenerateWaveform(parameters)
         times, modes = waveform.generate_td_modes()
@@ -143,11 +178,20 @@ def convert_to_egw(
         waveform_qc = GenerateWaveform(parameters_qc)
         times_qc, modes_qc = waveform_qc.generate_td_modes()
 
+    if precessing:
+        # Pass the full inertial ell=2 set; gw_eccentricity rotates to the
+        # coprecessing frame internally when precessing=True.
+        hlm = {k: np.array(modes[k]) for k in modes if k[0] == 2}
+        hlm_zeroecc = {k: np.array(modes_qc[k]) for k in modes_qc if k[0] == 2}
+    else:
+        hlm = {(2, 2): np.array(modes[2, 2])}
+        hlm_zeroecc = {(2, 2): np.array(modes_qc[2, 2])}
+
     dataDict = {
         "t": times,
-        "hlm": {(2, 2): np.array(modes[2, 2])},
+        "hlm": hlm,
         "t_zeroecc": times_qc,
-        "hlm_zeroecc": {(2, 2): np.array(modes_qc[2, 2])},
+        "hlm_zeroecc": hlm_zeroecc,
     }
 
     if f_ref is not None and Mf_ref is not None:
@@ -166,6 +210,7 @@ def convert_to_egw(
         fref_in=f_ref,
         method=method,
         dataDict=dataDict,
+        precessing=precessing,
         num_orbits_to_exclude_before_merger=num_orbits_to_exclude_before_merger,
         extra_kwargs=extra_kwargs,
     )
@@ -246,6 +291,13 @@ if __name__ == "__main__":
     meta = result.meta_data
     f_min = meta["likelihood"]["waveform_arguments"]["minimum_frequency"]
 
+    precessing = args.approximant in PRECESSING_APPROXIMANTS
+    if precessing:
+        # Spins are defined at the PE reference frequency
+        f_ref_spins = meta["likelihood"]["waveform_arguments"]["reference_frequency"]
+        print(f"Precessing approximant {args.approximant}: "
+              f"reconstructing spins at f_ref = {f_ref_spins} Hz")
+
     if args.n_samples is not None and args.n_samples < len(pst):
         idx = np.random.choice(len(pst), size=args.n_samples, replace=False)
         pst = pst.iloc[idx].reset_index(drop=True)
@@ -275,13 +327,31 @@ if __name__ == "__main__":
     ]
 
     def convert_to_egw_sample(i):
+        if precessing:
+            _, s1x, s1y, s1z, s2x, s2y, s2z = bilby_to_lalsimulation_spins(
+                theta_jn=pst["theta_jn"][i],
+                phi_jl=pst["phi_jl"][i],
+                tilt_1=pst["tilt_1"][i],
+                tilt_2=pst["tilt_2"][i],
+                phi_12=pst["phi_12"][i],
+                a_1=pst["a_1"][i],
+                a_2=pst["a_2"][i],
+                mass_1=pst["mass_1"][i] * lal.MSUN_SI,
+                mass_2=pst["mass_2"][i] * lal.MSUN_SI,
+                reference_frequency=f_ref_spins,
+                phase=pst["phase"][i],
+            )
+            chi1, chi2 = [s1x, s1y, s1z], [s2x, s2y, s2z]
+        else:
+            chi1, chi2 = pst["chi_1"][i], pst["chi_2"][i]
+
         methods_to_try = [args.method] + [m for m in ALL_METHODS if m != args.method]
         for method in methods_to_try:
             try:
                 e_gw, mean_anomaly = convert_to_egw(
                     1 / pst["mass_ratio"][i],
-                    pst["chi_1"][i],
-                    pst["chi_2"][i],
+                    chi1,
+                    chi2,
                     pst["eccentricity"][i],
                     pst["mean_per_ano"][i],
                     pst["mass_1"][i] + pst["mass_2"][i],
@@ -292,6 +362,7 @@ if __name__ == "__main__":
                     t_back=args.t_back,
                     method=method,
                     approximant=args.approximant,
+                    precessing=precessing,
                     num_orbits_to_exclude_before_merger=args.num_orbits_to_exclude_before_merger,
                     extra_kwargs=json.loads(args.extra_kwargs) if args.extra_kwargs else None,
                 )
