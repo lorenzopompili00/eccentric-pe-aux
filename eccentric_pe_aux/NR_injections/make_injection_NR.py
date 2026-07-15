@@ -20,13 +20,19 @@ from scipy.interpolate import interp1d
 warnings.filterwarnings("ignore", "Wswiglal-redir-stdio")
 
 # Restore the default plotting settings altered by gwpy
-import matplotlib as mpl
-_original_legend = plt.Axes.legend
-def _patched_legend(self, *args, **kwargs):
-    kwargs["handler_map"] = {mpl.lines.Line2D: mpl.legend_handler.HandlerLine2D()}
-    return _original_legend(self, *args, **kwargs)
-plt.Axes.legend = _patched_legend
-mpl.rcParams.update(mpl.rcParamsDefault)
+if __name__ == "__main__":
+    import matplotlib as mpl
+
+    _original_legend = plt.Axes.legend
+
+    def _patched_legend(self, *args, **kwargs):
+        handler_map = dict(kwargs.pop("handler_map", {}) or {})
+        handler_map[mpl.lines.Line2D] = mpl.legend_handler.HandlerLine2D()
+        kwargs["handler_map"] = handler_map
+        return _original_legend(self, *args, **kwargs)
+
+    plt.Axes.legend = _patched_legend
+    mpl.rcdefaults()
 
 
 def hp_hc_NR_phys_units(SXS_ID, injection_dict, t_taper=500, sim_file=None):
