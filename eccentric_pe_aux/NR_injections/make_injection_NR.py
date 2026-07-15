@@ -122,6 +122,8 @@ def interpolate_to_grid(t_orig, h_orig, t_new):
 
 def compute_interp_error_from_aligned(t_orig, h_orig, t_aligned, h_aligned, label):
     """Compute and plot interpolation error for debugging."""
+    os.makedirs("fig", exist_ok=True)
+
     # Interpolate back from the aligned signal to original time points
     interp_back = interp1d(
         t_aligned, h_aligned, kind="cubic", bounds_error=False, fill_value=0.0
@@ -141,8 +143,8 @@ def compute_interp_error_from_aligned(t_orig, h_orig, t_aligned, h_aligned, labe
     plt.plot(t_orig, error, label=f"{label} interpolation error")
     plt.xlabel("Time (s)")
     plt.ylabel("Error")
-    plt.savefig(f"fig/{label}_debug.png")
     plt.legend()
+    plt.savefig(f"fig/{label}_debug.png")
     plt.show()
 
 
