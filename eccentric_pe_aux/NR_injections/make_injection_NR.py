@@ -264,7 +264,7 @@ def main():
         print(f"Written: {output_file}")
 
         if plots:
-            max_str = ts.times[np.argmax(np.asarray(ts.data))].to_value('s')
+            max_str = ts.times[np.argmax(np.abs(np.asarray(ts.data)))].to_value('s')
             fig, axs = plt.subplots(1, 2, figsize=(12, 4))
             axs[0].plot(ts.times, np.asarray(ts.data), label=ts.channel)
             axs[0].axvline(injection_dict["geocent_time"], color='gray', linewidth=1)
