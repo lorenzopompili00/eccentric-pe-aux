@@ -10,6 +10,8 @@ import yaml
 import lal
 import matplotlib.pyplot as plt
 import numpy as np
+import os
+
 import sxs
 from gwpy.timeseries import TimeSeries
 from pycbc.detector import Detector
@@ -17,8 +19,23 @@ from scipy.interpolate import interp1d
 
 warnings.filterwarnings("ignore", "Wswiglal-redir-stdio")
 
+# Restore the default plotting settings altered by gwpy
+if __name__ == "__main__":
+    import matplotlib as mpl
 
-def hp_hc_NR_phys_units(SXS_ID, injection_dict, t_taper=500):
+    _original_legend = plt.Axes.legend
+
+    def _patched_legend(self, *args, **kwargs):
+        handler_map = dict(kwargs.pop("handler_map", {}) or {})
+        handler_map[mpl.lines.Line2D] = mpl.legend_handler.HandlerLine2D()
+        kwargs["handler_map"] = handler_map
+        return _original_legend(self, *args, **kwargs)
+
+    plt.Axes.legend = _patched_legend
+    mpl.rcdefaults()
+
+
+def hp_hc_NR_phys_units(SXS_ID, injection_dict, t_taper=500, sim_file=None):
     """Load an SXS waveform and return h+, hx in physical units.
 
     Sums all (ell, m) modes weighted by spin-weighted spherical harmonics,
@@ -45,9 +62,14 @@ def hp_hc_NR_phys_units(SXS_ID, injection_dict, t_taper=500):
     mtot = injection_dict["total_mass"]
     dl = injection_dict["luminosity_distance"]
 
-    wf = sxs.load(SXS_ID)
+    if sim_file is not None:
+        wf = sxs.load(sim_file)
+        w = wf
+    else:
+        wf = sxs.load(SXS_ID)
+        w = wf.h
+
     reference_time = wf.metadata.reference_time
-    w = wf.h
     reference_index = w.index_closest_to(reference_time)
     w = w[reference_index:, :]
     w = w.preprocess(t1=reference_time, t2=reference_time + t_taper)
@@ -100,6 +122,8 @@ def interpolate_to_grid(t_orig, h_orig, t_new):
 
 def compute_interp_error_from_aligned(t_orig, h_orig, t_aligned, h_aligned, label):
     """Compute and plot interpolation error for debugging."""
+    os.makedirs("fig", exist_ok=True)
+
     # Interpolate back from the aligned signal to original time points
     interp_back = interp1d(
         t_aligned, h_aligned, kind="cubic", bounds_error=False, fill_value=0.0
@@ -119,8 +143,8 @@ def compute_interp_error_from_aligned(t_orig, h_orig, t_aligned, h_aligned, labe
     plt.plot(t_orig, error, label=f"{label} interpolation error")
     plt.xlabel("Time (s)")
     plt.ylabel("Error")
-    plt.savefig(f"{label}_debug.png")
     plt.legend()
+    plt.savefig(f"fig/{label}_debug.png")
     plt.show()
 
 
@@ -143,15 +167,28 @@ def main():
 
     # Extract configuration parameters
     SXS_ID = config["SXS_ID"]
+    sim_id_label = SXS_ID.replace(":", "_").replace("/", "_")
+    sim_file = config.get("sim_file", None)
     injection_dict = config["injection_dict"]
     debug = config.get("debug", False)
-    output_prefix = config.get("output_prefix", SXS_ID.replace(":", "_"))
+    plots = config.get("plots", False)
+    output_prefix = config.get("output_prefix", sim_id_label)
     t_taper = config.get("t_taper", 500)
     channel_suffix = config.get("channel_suffix", "INJECTED")
     sampling_rate = config.get("sampling_rate", 2048.0)
     post_trigger_duration = config.get("post_trigger_duration", 4.0)
     duration = config.get("duration", 16.0)
+    post_trigger_duration_bilby = config.get("post_trigger_duration_bilby", 2.0)
+    duration_bilby = config.get("duration_bilby", 8.0)
     detector_names = config.get("detectors", ["H1", "L1"])
+
+    if plots:
+        os.makedirs("fig", exist_ok=True)
+
+    # Define left and right boundaries of the data
+    # [t_trigger + post_trigger - duration, t_trigger + post_trigger]
+    left_b = injection_dict["geocent_time"] + post_trigger_duration - duration
+    right_b = injection_dict["geocent_time"] + post_trigger_duration
 
     # Create detector objects
     detectors = [Detector(name) for name in detector_names]
@@ -162,7 +199,26 @@ def main():
     print(f"Detectors: {', '.join(detector_names)}")
 
     # Generate h+ and hx in physical units
-    hp, hc, hpc_times = hp_hc_NR_phys_units(SXS_ID, injection_dict, t_taper=t_taper)
+    hp, hc, hpc_times = hp_hc_NR_phys_units(
+        SXS_ID, injection_dict, t_taper=t_taper, sim_file=sim_file,
+    )
+
+    if plots:
+        plt.plot(hpc_times, hp, label=r'$h_+$')
+        plt.plot(hpc_times, hc, label=r'$h_\times$')
+        plt.xlabel(r"$t$ [s]")
+        plt.ylabel(r"$h$")
+        plt.title(
+            rf"{SXS_ID}, $M = {injection_dict['total_mass']}$, $d_L = {injection_dict['luminosity_distance']}$, $\iota = {injection_dict['iota']}$, $\phi = {injection_dict['phase']}$, $\mathrm{{dec}} = {injection_dict['dec']}$, $\mathrm{{ra}} = {injection_dict['ra']}$",
+            y=1.06,    
+        )
+        plt.legend()
+        plt.grid(alpha=0.3)
+        plt.savefig(
+            f"fig/polarizations_{sim_id_label}.png",
+            bbox_inches="tight",
+            dpi=400,
+        )
 
     # Compute detector-specific times and strains
     detector_times = {}
@@ -206,6 +262,34 @@ def main():
         output_file = f"{output_prefix}_{name}.gwf"
         ts.write(output_file, format="gwf")
         print(f"Written: {output_file}")
+
+        if plots:
+            max_str = ts.times[np.argmax(np.abs(np.asarray(ts.data)))].to_value('s')
+            fig, axs = plt.subplots(1, 2, figsize=(12, 4))
+            axs[0].plot(ts.times, np.asarray(ts.data), label=ts.channel)
+            axs[0].axvline(injection_dict["geocent_time"], color='gray', linewidth=1)
+            axs[0].axvline(left_b, color='k', linewidth=1, linestyle='--')
+            axs[0].axvline(right_b, color='k', linewidth=1, linestyle='--')
+            axs[0].set_title(f"Interval: {right_b - left_b} [s]")
+            axs[0].legend(frameon=False)
+            axs[1].plot(ts.times, np.asarray(ts.data))
+            axs[1].axvline(injection_dict["geocent_time"], color='gray', linewidth=1)
+            axs[1].set_xlim(
+                max_str + post_trigger_duration_bilby - duration_bilby,
+                max_str + post_trigger_duration_bilby
+            )
+            axs[1].set_title(f"Interval: {duration_bilby} [s]")
+            for ax in axs.flat:
+                ax.grid(alpha=0.2)
+            fig.suptitle(
+                rf"{SXS_ID}, $M = {injection_dict['total_mass']}$, $d_L = {injection_dict['luminosity_distance']}$, $\iota = {injection_dict['iota']}$, $\phi = {injection_dict['phase']}$, $\mathrm{{dec}} = {injection_dict['dec']}$, $\mathrm{{ra}} = {injection_dict['ra']}$",
+                y=1.01,
+            )
+            plt.savefig(
+                f"fig/{name}_injection_{sim_id_label}.png",
+                bbox_inches="tight",
+                dpi=400,
+            )
 
 
 if __name__ == "__main__":
