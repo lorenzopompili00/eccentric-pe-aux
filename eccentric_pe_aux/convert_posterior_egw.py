@@ -2,7 +2,12 @@
 Convert posterior samples from an eccentric EOB run (eccentricity, mean_per_ano)
 to GW-eccentricity (e_gw, mean_anomaly) measured at a reference frequency.
 Supports both aligned-spin (e.g. SEOBNRv6EHM) and eccentric-precessing
-(SEOBNRv6EPHM) approximants.
+(SEOBNRv6EPHM) approximants, and TEOBResumSDALI in either mode -- for TEOB the
+spin treatment is taken from the posterior (or forced with --precessing).
+
+TEOBResumSDALI has no backward integration, so f_ref must be chosen comfortably above
+f_min. Starting the waveform lower is not an option: TEOB defines the spins at
+f22_start, so that would change the physical system.
 
 Can be run as a script: python -m eccentric_pe_aux.convert_posterior_egw --result <file>
 """
@@ -28,7 +33,23 @@ warnings.filterwarnings("ignore", "Wswiglal-redir-stdio")
 
 os.environ["OMP_NUM_THREADS"] = "1"
 
+# Always driven with Cartesian spins, whatever the run's spin configuration.
 PRECESSING_APPROXIMANTS = ["SEOBNRv6EPHM"]
+
+# Usable either aligned or precessing; decided from the posterior unless --precessing.
+DUAL_SPIN_APPROXIMANTS = ["TEOBResumSDALI"]
+
+
+def posterior_is_precessing(posterior, tol: float = 1e-6) -> bool:
+    """True if the posterior has a non-negligible in-plane spin component.
+    Aligned runs store chi_1/chi_2 instead of tilts, or have tilts pinned to 0/pi.
+    """
+    if "tilt_1" not in posterior:
+        return False
+    s1 = (posterior["a_1"] * np.sin(posterior["tilt_1"])).abs().max()
+    s2 = (posterior["a_2"] * np.sin(posterior["tilt_2"])).abs().max()
+    return max(s1, s2) > tol
+
 
 # Extra backward integration (units of M) added to the zero-ecc reference in the
 # precessing case, where we cannot lower f22_start to give it a low-frequency
@@ -106,23 +127,44 @@ def convert_to_egw(
     m1 = q / (1.0 + q) * Mtot
     m2 = 1.0 / (1.0 + q) * Mtot
 
-    if approximant == 'TEOBResumSDALI':
+    if approximant == "TEOBResumSDALI":
+
+        U = u.dimensionless_unscaled
+        if precessing:
+            # Requesting the (2,2)+(2,1) coprecessing modes makes TEOB twist them into
+            # the full inertial ell=2 set, as gw_eccentricity needs when precessing.
+            spin_params = {
+                "spin1x": chi1[0] * U,
+                "spin1y": chi1[1] * U,
+                "spin1z": chi1[2] * U,
+                "spin2x": chi2[0] * U,
+                "spin2y": chi2[1] * U,
+                "spin2z": chi2[2] * U,
+            }
+            mode_array = [(2, 2), (2, 1)]
+        else:
+            spin_params = {"spin1z": chi1 * U, "spin2z": chi2 * U}
+            mode_array = [(2, 2)]
 
         parameters = {
             "mass1": m1 * u.solMass,
             "mass2": m2 * u.solMass,
-            "spin1z": chi1 * u.dimensionless_unscaled,
-            "spin2z": chi2 * u.dimensionless_unscaled,
+            **spin_params,
             "f22_start": f_min * u.Hz,
-            "eccentricity": eccentricity * u.dimensionless_unscaled,
+            "eccentricity": eccentricity * U,
             "meanPerAno": rel_anomaly * u.rad,
-            "ModeArray": [(2, 2)],
+            "ModeArray": mode_array,
             "deltaT": deltaT * u.s,
         }
 
         parameters_qc = deepcopy(parameters)
-        parameters_qc["eccentricity"] = 0.0 * u.dimensionless_unscaled
-        parameters_qc["f22_start"] = f_min * 0.9 * u.Hz
+        parameters_qc["eccentricity"] = 0.0 * U
+        if not precessing:
+            # Margin for the zero-ecc reference; safe only for aligned spins, whose
+            # components do not depend on the reference frequency.
+            parameters_qc["f22_start"] = f_min * 0.9 * u.Hz
+        # Precessing: f22_start is left alone -- TEOB defines the spins there, so
+        # lowering it would change the binary. Get margin via a higher f_ref instead.
 
         gen = gwsignal_get_waveform_generator(approximant)
         modes = gen.generate_td_modes(**parameters)
@@ -136,8 +178,12 @@ def convert_to_egw(
 
         if precessing:
             spin_params = {
-                "spin1x": chi1[0], "spin1y": chi1[1], "spin1z": chi1[2],
-                "spin2x": chi2[0], "spin2y": chi2[1], "spin2z": chi2[2],
+                "spin1x": chi1[0],
+                "spin1y": chi1[1],
+                "spin1z": chi1[2],
+                "spin2x": chi2[0],
+                "spin2y": chi2[1],
+                "spin2z": chi2[2],
             }
             # ell=2 coprecessing modes needed for the full inertial ell=2 set
             return_modes = [(2, 2), (2, 1)]
@@ -165,7 +211,7 @@ def convert_to_egw(
         if precessing:
             # We cannot lower f22_start here: eccentric approximants require
             # f_ref == f22_start, and the spins are defined at f_ref, so that
-            # would make the zero-ecc reference a system with different spins. 
+            # would make the zero-ecc reference a system with different spins.
             # We add a bit more backward integration instead so the
             # reference still spans the eccentric waveform.
             parameters_qc["t_backwards"] = t_back + PREC_QC_EXTRA_TBACK
@@ -177,6 +223,16 @@ def convert_to_egw(
 
         waveform_qc = GenerateWaveform(parameters_qc)
         times_qc, modes_qc = waveform_qc.generate_td_modes()
+
+    # The coprecessing rotation needs the complete inertial ell=2 set, but TEOB falls
+    # back to its aligned branch (only (2,+-2)) when the in-plane spin drops below ~1e-4,
+    # as happens for samples with tilt -> 0. Follow what was actually generated: with no
+    # in-plane spin there is no precession, so the (2,2) measurement is equivalent.
+    ell2 = {(2, m) for m in (-2, -1, 0, 1, 2)}
+    if precessing and not (
+        ell2.issubset(set(modes.keys())) and ell2.issubset(set(modes_qc.keys()))
+    ):
+        precessing = False
 
     if precessing:
         # Pass the full inertial ell=2 set; gw_eccentricity rotates to the
@@ -240,9 +296,7 @@ if __name__ == "__main__":
     p.add_argument(
         "--t-back", type=float, help="Time for backwards integration", default=20000.0
     )
-    p.add_argument(
-        "--srate", type=float, help="Sampling rate in Hz", default=16384.0
-    )
+    p.add_argument("--srate", type=float, help="Sampling rate in Hz", default=16384.0)
     p.add_argument(
         "--method",
         type=str,
@@ -284,6 +338,14 @@ if __name__ == "__main__":
         action="store_true",
         help="If set, samples that fail to convert will be set to NaN",
     )
+    p.add_argument(
+        "--precessing",
+        choices=["auto", "yes", "no"],
+        default="auto",
+        help="Spin treatment. 'auto' (default): always precessing for "
+        f"{PRECESSING_APPROXIMANTS}, and for {DUAL_SPIN_APPROXIMANTS} decided from the "
+        "posterior (precessing iff it has non-negligible in-plane spin).",
+    )
     args = p.parse_args()
 
     result = bilby.read_in_result(args.result)
@@ -291,17 +353,30 @@ if __name__ == "__main__":
     meta = result.meta_data
     f_min = meta["likelihood"]["waveform_arguments"]["minimum_frequency"]
 
-    precessing = args.approximant in PRECESSING_APPROXIMANTS
+    if args.precessing == "auto":
+        precessing = args.approximant in PRECESSING_APPROXIMANTS or (
+            args.approximant in DUAL_SPIN_APPROXIMANTS and posterior_is_precessing(pst)
+        )
+    else:
+        precessing = args.precessing == "yes"
+
+    print(
+        f"{args.approximant}: {'PRECESSING' if precessing else 'aligned-spin'} spin "
+        f"treatment ({'forced by --precessing' if args.precessing != 'auto' else 'auto'})"
+    )
     if precessing:
         # Spins are defined at the PE reference frequency
         f_ref_spins = meta["likelihood"]["waveform_arguments"]["reference_frequency"]
-        print(f"Precessing approximant {args.approximant}: "
-              f"reconstructing spins at f_ref = {f_ref_spins} Hz")
+        print(
+            f"Precessing approximant {args.approximant}: "
+            f"reconstructing spins at f_ref = {f_ref_spins} Hz"
+        )
 
     if args.n_samples is not None and args.n_samples < len(pst):
         idx = np.random.choice(len(pst), size=args.n_samples, replace=False)
-        pst = pst.iloc[idx].reset_index(drop=True)
         print(f"Randomly selected {args.n_samples} / {len(result.posterior)} samples")
+        pst = pst.iloc[idx].reset_index(drop=True)
+        result.posterior = pst
 
     print(f"f_min = {f_min} Hz")
 
@@ -314,8 +389,27 @@ if __name__ == "__main__":
     deltaT = 1 / args.srate
 
     if args.t_back > 0 and args.approximant in ["TEOBResumSDALI"]:
-        print("Warning: Backwards integration is not currently implemented for TEOBResumSDALI. Setting t_back to 0.")
+        print(
+            "Warning: Backwards integration is not currently implemented for TEOBResumSDALI. Setting t_back to 0."
+        )
         args.t_back = 0.0
+
+    if args.approximant == "TEOBResumSDALI" and args.f_ref is not None:
+        # The waveform starts at f_min and gw_eccentricity needs a few orbits before it
+        # can locate the extrema, so the lowest measurable f_ref sits well above f_min
+        # (~1.2 x f_min for eccPrec_highq_028, and it grows with eccentricity).
+        if args.f_ref <= f_min:
+            raise SystemExit(
+                f"f_ref = {args.f_ref} Hz is <= f_min = {f_min} Hz: every sample would "
+                "fail. TEOBResumSDALI has no backward integration, so pick a higher "
+                "--f-ref (f_ref/f_min >~ 1.3 to start). Starting the waveform lower is "
+                "not an alternative: TEOB defines the spins at f22_start."
+            )
+        if args.f_ref < 1.2 * f_min:
+            print(
+                f"Warning: f_ref = {args.f_ref} Hz is only {args.f_ref / f_min:.2f} x f_min; "
+                "expect failures for some samples (raise --f-ref if so)."
+            )
 
     ALL_METHODS = [
         "ResidualAmplitude",
@@ -342,8 +436,12 @@ if __name__ == "__main__":
                 phase=pst["phase"][i],
             )
             chi1, chi2 = [s1x, s1y, s1z], [s2x, s2y, s2z]
-        else:
+        elif "chi_1" in pst:
             chi1, chi2 = pst["chi_1"][i], pst["chi_2"][i]
+        else:
+            # aligned run stored in the (a, tilt) parameterisation: chi_z = a cos(tilt)
+            chi1 = pst["a_1"][i] * np.cos(pst["tilt_1"][i])
+            chi2 = pst["a_2"][i] * np.cos(pst["tilt_2"][i])
 
         methods_to_try = [args.method] + [m for m in ALL_METHODS if m != args.method]
         for method in methods_to_try:
@@ -364,7 +462,9 @@ if __name__ == "__main__":
                     approximant=args.approximant,
                     precessing=precessing,
                     num_orbits_to_exclude_before_merger=args.num_orbits_to_exclude_before_merger,
-                    extra_kwargs=json.loads(args.extra_kwargs) if args.extra_kwargs else None,
+                    extra_kwargs=(
+                        json.loads(args.extra_kwargs) if args.extra_kwargs else None
+                    ),
                 )
                 return e_gw, mean_anomaly
             except Exception:
@@ -393,7 +493,7 @@ if __name__ == "__main__":
     if n_failed / len(pst) > 0.5:
         raise RuntimeError(
             "More than 50% of samples failed to convert. Check the conversion settings."
-        ) 
+        )
 
     e_gw_pst = np.array(e_gw_pst)
     mean_anomaly_pst = np.array(mean_anomaly_pst)
