@@ -14,6 +14,7 @@ from .ecc_cartesian import (
     generate_all_cartesian_ecc_bbh_parameters,
 )
 from .hyperbolic import HyperbolicGWSignalWaveformGenerator
+from .nr_sxs import NRWaveformGenerator, NRGWSignalWaveformGenerator
 from .capture_prior import (
     CaptureEnergyPrior,
     CaptureMomentumPrior,
@@ -30,6 +31,8 @@ __all__ = [
     "convert_to_cartesian_ecc_bbh_parameters",
     "generate_all_cartesian_ecc_bbh_parameters",
     "HyperbolicGWSignalWaveformGenerator",
+    "NRWaveformGenerator",
+    "NRGWSignalWaveformGenerator",
     "CaptureEnergyPrior",
     "CaptureMomentumPrior",
     "make_capture_prior_dict",
