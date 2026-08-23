@@ -5,8 +5,9 @@ from pyseobnr.generate_waveform import generate_modes_opt
 from scipy.interpolate import interp1d
 
 
-def eccentric_starting_frequency(f_start: float, e_low: float, M: float, q: float,
-                                 chi_1: float, chi_2: float) -> float:
+def eccentric_starting_frequency(
+    f_start: float, e_low: float, M: float, q: float, chi_1: float, chi_2: float
+) -> float:
     """
     Compute the orbit-averaged starting frequency for gravitational waveform generation
     such that the instantaneous frequency at periastron matches the provided minimum frequency.
@@ -62,19 +63,19 @@ def eccentric_starting_frequency(f_start: float, e_low: float, M: float, q: floa
         q,
         chi_1,
         chi_2,
-        omega_start = omega_avg,
-        eccentricity = e_low,
-        rel_anomaly = 0.0,
-        approximant = "SEOBNRv5EHM",
+        omega_start=omega_avg,
+        eccentricity=e_low,
+        rel_anomaly=0.0,
+        approximant="SEOBNRv5EHM",
         debug=True,
-        settings=dict(return_modes=[(2,2)], lmax_nyquist=1)
+        settings=dict(return_modes=[(2, 2)], lmax_nyquist=1),
     )
     t, r, phi, pr, pphi, e, z, x, H, Omega = model.dynamics.T
 
-    interp_func_e = interp1d(x, e, kind='linear')
+    interp_func_e = interp1d(x, e, kind="linear")
 
     omega_start = np.pi * f_start * M * lal.MTSUN_SI
-    x_start = omega_start**(2/3)
+    x_start = omega_start ** (2 / 3)
     e_start = interp_func_e(x_start)
 
     return f_low, e_start

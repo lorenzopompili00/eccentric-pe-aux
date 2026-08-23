@@ -8,6 +8,8 @@ spin treatment is taken from the posterior (or forced with --precessing).
 TEOBResumSDALI has no backward integration, so f_ref must be chosen comfortably above
 f_min. Starting the waveform lower is not an option: TEOB defines the spins at
 f22_start, so that would change the physical system.
+--extrapolate lifts that floor: e_gw is measured on a grid running upward from f_ref and
+the value at f_ref is obtained by eccentric_pe_aux.egw_extrapolation.extrapolate_egw.
 
 Can be run as a script: python -m eccentric_pe_aux.convert_posterior_egw --result <file>
 """
@@ -26,6 +28,7 @@ import numpy as np
 import tqdm
 from bilby.gw.conversion import bilby_to_lalsimulation_spins
 from gw_eccentricity import measure_eccentricity
+from eccentric_pe_aux.egw_extrapolation import extrapolate_egw
 from pyseobnr.generate_waveform import GenerateWaveform
 from lalsimulation.gwsignal import gwsignal_get_waveform_generator
 
@@ -56,6 +59,12 @@ def posterior_is_precessing(posterior, tol: float = 1e-6) -> bool:
 # margin (that would move f_ref and hence the spins).
 PREC_QC_EXTRA_TBACK = 2000.0
 
+# Grid used when --extrapolate is on: f_ref up to EXTRAP_FMAX_FACTOR * f_ref. Only the
+# points gw_eccentricity can actually measure come back (in fref_out), so the floor does
+# not have to be known in advance
+EXTRAP_FMAX_FACTOR = 3.0
+EXTRAP_NPOINTS = 16
+
 
 def convert_to_egw(
     q: float,
@@ -75,6 +84,8 @@ def convert_to_egw(
     num_orbits_to_exclude_before_merger: int = 1,
     extra_kwargs: dict | None = None,
     debug: bool = False,
+    extrapolate: bool = False,
+    extrap_floor: float | None = None,
 ):
     """Generate an EOB waveform and measure the GW eccentricity at a reference frequency.
 
@@ -116,6 +127,13 @@ def convert_to_egw(
         Extra keyword arguments passed to gw_eccentricity.measure_eccentricity.
     debug : bool, optional
         If True, show diagnostic plots from gw_eccentricity.
+    extrapolate : bool, optional
+        If True and f_ref lies below the lowest frequency gw_eccentricity can measure
+        for this waveform, measure a grid above f_ref and extrapolate down to it (see
+        the module docstring). If f_ref turns out to be directly measurable the grid
+        value is used unchanged, so the flag is safe to leave on. ``mean_anomaly`` is
+        returned as NaN whenever the value is extrapolated -- it is an angle, and the
+        fit is meaningless for it.
 
     Returns
     -------
@@ -262,8 +280,12 @@ def convert_to_egw(
     if extra_kwargs is None:
         extra_kwargs = {"treat_mid_points_between_pericenters_as_apocenters": True}
 
+    fref_in = f_ref
+    if extrapolate:
+        fref_in = np.geomspace(f_ref, EXTRAP_FMAX_FACTOR * f_ref, EXTRAP_NPOINTS)
+
     return_dict = measure_eccentricity(
-        fref_in=f_ref,
+        fref_in=fref_in,
         method=method,
         dataDict=dataDict,
         precessing=precessing,
@@ -273,6 +295,34 @@ def convert_to_egw(
 
     e_gw = return_dict["eccentricity"]
     mean_anomaly = return_dict["mean_anomaly"]
+
+    if extrapolate:
+        # gw_eccentricity returns only the grid points it could actually measure, so
+        # fref_out -- not the requested grid -- is what the fit must be built on.
+        f_out = np.atleast_1d(np.asarray(return_dict["fref_out"], float))
+        e_out = np.atleast_1d(np.asarray(e_gw, float))
+        a_out = np.atleast_1d(np.asarray(mean_anomaly, float))
+        if len(f_out) != len(e_out):
+            raise RuntimeError(
+                f"fref_out ({len(f_out)}) and eccentricity ({len(e_out)}) disagree"
+            )
+        if extrap_floor is not None:
+            keep = f_out >= extrap_floor
+            if keep.sum() < 3:
+                raise ValueError(
+                    f"only {int(keep.sum())} measured points at or above the requested "
+                    f"extrap_floor = {extrap_floor} Hz"
+                )
+            f_out, e_out, a_out = f_out[keep], e_out[keep], a_out[keep]
+
+        hit = np.isclose(f_out, f_ref, rtol=1e-6)
+        if hit.any():
+            # directly measurable after all: no extrapolation, and the anomaly is real
+            j = int(np.argmax(hit))
+            e_gw, mean_anomaly = float(e_out[j]), float(a_out[j])
+        else:
+            e_gw = extrapolate_egw(f_out, e_out, f_ref)
+            mean_anomaly = np.nan
 
     if debug:
         gwecc_object = return_dict["gwecc_object"]
@@ -339,6 +389,22 @@ if __name__ == "__main__":
         help="If set, samples that fail to convert will be set to NaN",
     )
     p.add_argument(
+        "--extrapolate",
+        action="store_true",
+        help="Allow f_ref below the lowest measurable frequency: measure a grid above "
+        "f_ref and extrapolate down to it (see module docstring). "
+        "mean_anomaly_gw is NaN for extrapolated samples.",
+    )
+    p.add_argument(
+        "--extrap-floor",
+        type=float,
+        default=None,
+        help="With --extrapolate, ignore measured points below this frequency. Use it "
+        "to reproduce another model's reach: two approximants on the same system have "
+        "different lowest measurable frequencies, so validating one against the other "
+        "must force both to extrapolate over the same span.",
+    )
+    p.add_argument(
         "--precessing",
         choices=["auto", "yes", "no"],
         default="auto",
@@ -396,19 +462,27 @@ if __name__ == "__main__":
 
     if args.approximant == "TEOBResumSDALI" and args.f_ref is not None:
         # The waveform starts at f_min and gw_eccentricity needs a few orbits before it
-        # can locate the extrema, so the lowest measurable f_ref sits well above f_min
-        # (~1.2 x f_min for eccPrec_highq_028, and it grows with eccentricity).
-        if args.f_ref <= f_min:
+        # can locate the extrema, so the lowest measurable f_ref sits above f_min by a
+        # margin that grows with eccentricity.
+        if args.f_ref <= f_min and not args.extrapolate:
             raise SystemExit(
                 f"f_ref = {args.f_ref} Hz is <= f_min = {f_min} Hz: every sample would "
-                "fail. TEOBResumSDALI has no backward integration, so pick a higher "
-                "--f-ref (f_ref/f_min >~ 1.3 to start). Starting the waveform lower is "
-                "not an alternative: TEOB defines the spins at f22_start."
+                "fail. TEOBResumSDALI has no backward integration, so either pick a "
+                "higher --f-ref (f_ref/f_min >~ 1.3 to start) or pass --extrapolate to "
+                "measure above f_ref and extrapolate down. Starting the waveform lower "
+                "is not an alternative: TEOB defines the spins at f22_start."
             )
-        if args.f_ref < 1.2 * f_min:
+        if args.f_ref < 1.2 * f_min and not args.extrapolate:
             print(
                 f"Warning: f_ref = {args.f_ref} Hz is only {args.f_ref / f_min:.2f} x f_min; "
-                "expect failures for some samples (raise --f-ref if so)."
+                "expect failures for some samples (raise --f-ref if so, or --extrapolate)."
+            )
+        if args.extrapolate:
+            print(
+                f"--extrapolate: measuring {EXTRAP_NPOINTS} points over "
+                f"[{args.f_ref:.1f}, {EXTRAP_FMAX_FACTOR * args.f_ref:.1f}] Hz and "
+                f"fitting down to {args.f_ref:.1f} Hz where it is not directly "
+                "measurable (mean_anomaly_gw will be NaN for those samples)"
             )
 
     ALL_METHODS = [
@@ -465,6 +539,8 @@ if __name__ == "__main__":
                     extra_kwargs=(
                         json.loads(args.extra_kwargs) if args.extra_kwargs else None
                     ),
+                    extrapolate=args.extrapolate,
+                    extrap_floor=args.extrap_floor,
                 )
                 return e_gw, mean_anomaly
             except Exception:

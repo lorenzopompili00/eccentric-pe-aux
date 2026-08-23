@@ -76,17 +76,17 @@ def convert_to_eEOB(
         q,
         chi1,
         chi2,
-        omega_start = omega_avg,
-        eccentricity = eccentricity,
-        rel_anomaly = rel_anomaly,
-        approximant = approximant,
+        omega_start=omega_avg,
+        eccentricity=eccentricity,
+        rel_anomaly=rel_anomaly,
+        approximant=approximant,
         debug=True,
-        settings=dict(return_modes=[(2,2)], dt=deltaT, lmax_nyquist=1)
+        settings=dict(return_modes=[(2, 2)], dt=deltaT, lmax_nyquist=1),
     )
     t, r, phi, pr, pphi, e, z, x, H, Omega = model.dynamics.T
 
-    interp_func_e = interp1d(x, e, kind='linear')
-    interp_func_z = interp1d(x, z, kind='linear')
+    interp_func_e = interp1d(x, e, kind="linear")
+    interp_func_z = interp1d(x, z, kind="linear")
 
     if f_ref is not None and Mf_ref is not None:
         raise ValueError("Specify only one of 'f_ref' or 'Mf_ref', not both.")
@@ -97,9 +97,8 @@ def convert_to_eEOB(
     if f_ref is None and Mf_ref is not None:
         f_ref = Mf_ref / (Mtot * lal.MTSUN_SI)
 
-
     omega_ref = np.pi * f_ref * Mtot * lal.MTSUN_SI
-    x_ref = omega_ref**(2/3)
+    x_ref = omega_ref ** (2 / 3)
     e_ref = interp_func_e(x_ref)
     zeta_ref = interp_func_z(x_ref)
 
@@ -107,14 +106,14 @@ def convert_to_eEOB(
         import matplotlib.pyplot as plt
 
         plt.plot(x, e)
-        plt.axvline(x=x_ref, color='gray', linestyle='--')
-        plt.scatter([x_ref], [e_ref], color='red')
+        plt.axvline(x=x_ref, color="gray", linestyle="--")
+        plt.scatter([x_ref], [e_ref], color="red")
         plt.legend()
         plt.show()
 
         plt.plot(x, z)
-        plt.axvline(x=x_ref, color='gray', linestyle='--')
-        plt.scatter([x_ref], [zeta_ref], color='red')
+        plt.axvline(x=x_ref, color="gray", linestyle="--")
+        plt.scatter([x_ref], [zeta_ref], color="red")
         plt.legend()
         plt.show()
 
@@ -133,9 +132,7 @@ if __name__ == "__main__":
     p.add_argument(
         "--Mf-ref", type=float, help="Dimensionless reference frequency", default=None
     )
-    p.add_argument(
-        "--srate", type=float, help="Sampling rate in Hz", default=32768
-    )
+    p.add_argument("--srate", type=float, help="Sampling rate in Hz", default=32768)
     p.add_argument(
         "--approximant",
         type=str,
