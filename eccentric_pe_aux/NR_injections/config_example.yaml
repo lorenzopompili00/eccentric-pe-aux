@@ -28,3 +28,22 @@ duration: 16.0
 detectors:
   - H1
   - L1
+
+# Noise settings
+# "zero" (default), "gaussian" (Gaussian noise from a PSD), or "real" (fetched detector data).
+noise_type: "zero"
+
+# --- Gaussian noise ---
+# generation_seed: 1234
+# psd_dict:
+#   H1: /path/to/H1_psd.txt
+#   L1: /path/to/L1_psd.txt
+
+# --- Real noise ---
+# channel_dict:
+#   H1: GWOSC
+#   L1: GWOSC
+# Local frame files (optional)
+# data_dict:
+#   H1: /path/to/H1.gwf
+#   L1: /path/to/L1.gwf

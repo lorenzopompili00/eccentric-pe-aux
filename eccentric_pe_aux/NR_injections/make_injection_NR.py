@@ -1,9 +1,11 @@
 #!/usr/bin/env python
 """
-Generate frame files for NR injections from SXS catalog.
+Generate frame files for NR injections from SXS catalog, in zero noise,
+Gaussian noise from a PSD, or real detector noise.
 """
 
 import argparse
+import logging
 import warnings
 import yaml
 
@@ -17,7 +19,18 @@ from gwpy.timeseries import TimeSeries
 from pycbc.detector import Detector
 from scipy.interpolate import interp1d
 
+from eccentric_pe_aux.NR_injections.noise import (
+    PSD_LENGTH,
+    PSD_MAXIMUM_DURATION,
+    fetch_real_data,
+    gaussian_noise_time_domain,
+    get_power_spectral_density,
+    optimal_snr,
+)
+
 warnings.filterwarnings("ignore", "Wswiglal-redir-stdio")
+
+logger = logging.getLogger("make_injection_NR")
 
 # Restore the default plotting settings altered by gwpy
 if __name__ == "__main__":
@@ -181,6 +194,14 @@ def main():
     post_trigger_duration_bilby = config.get("post_trigger_duration_bilby", 2.0)
     duration_bilby = config.get("duration_bilby", 8.0)
     detector_names = config.get("detectors", ["H1", "L1"])
+    noise_type = config.get("noise_type", "zero")
+    generation_seed = config.get("generation_seed", None)
+    psd_dict = config.get("psd_dict", {}) or {}
+    channel_dict = config.get("channel_dict", {}) or {}
+    data_dict = config.get("data_dict", {}) or {}
+
+    if noise_type not in ("zero", "gaussian", "real"):
+        raise ValueError(f"Unknown noise_type '{noise_type}'")
 
     if plots:
         os.makedirs("fig", exist_ok=True)
@@ -237,6 +258,44 @@ def main():
     start_sec = end_sec - duration
     target_times = np.arange(start_sec, end_sec, 1 / sampling_rate)
 
+    # Per-detector PSDs used for Gaussian noise
+    psds = {
+        name: get_power_spectral_density(name, psd_dict.get(name))
+        for name in detector_names
+        if noise_type == "gaussian" or name in psd_dict
+    }
+
+    if noise_type == "gaussian":
+        if generation_seed is None:
+            generation_seed = np.random.randint(1, int(1e6))
+        print(f"Gaussian noise generation seed: {generation_seed}")
+        from bilby.core.utils import random as bilby_random
+
+        bilby_random.seed(generation_seed)
+    elif noise_type == "real":
+        # Downstream, bilby_pipe estimates the PSD from off-source data right
+        # before the analysis segment unless an explicit psd-dict is given, so
+        # the frames must contain enough data before the trigger for that.
+        psd_duration = min(PSD_LENGTH * duration_bilby, PSD_MAXIMUM_DURATION)
+        analysis_start = (
+            injection_dict["geocent_time"] + post_trigger_duration_bilby - duration_bilby
+        )
+        if start_sec > analysis_start - psd_duration:
+            logger.warning(
+                "Frame data starts at %.0f but downstream off-source PSD "
+                "estimation needs data from %.0f (psd_length=%d x "
+                "duration_bilby=%.0f s, capped at %d s). Increase 'duration' "
+                "to at least %.0f s or pass an explicit psd-dict downstream.",
+                start_sec,
+                analysis_start - psd_duration,
+                PSD_LENGTH,
+                duration_bilby,
+                PSD_MAXIMUM_DURATION,
+                end_sec - (analysis_start - psd_duration),
+            )
+
+    network_snr_sq = 0.0
+
     # Resample and write output
     for det in detectors:
         name = det.name
@@ -254,14 +313,39 @@ def main():
                 f"{output_prefix}: {name}",
             )
 
+        if noise_type == "zero":
+            output_strain = resampled_strain
+        elif noise_type == "gaussian":
+            noise = gaussian_noise_time_domain(
+                psds[name], sampling_rate, duration, start_sec
+            )
+            assert len(noise) == len(target_times)
+            output_strain = resampled_strain + noise
+        else:  # real
+            data = fetch_real_data(
+                name, start_sec, end_sec, channel_dict, data_dict, sampling_rate
+            ).crop(start_sec, end_sec)
+            if len(data) != len(target_times) or abs(data.t0.value - start_sec) > 1e-6:
+                raise RuntimeError(
+                    f"{name}: fetched data not on the target grid "
+                    f"(t0={data.t0.value}, N={len(data)}; expected "
+                    f"t0={start_sec}, N={len(target_times)})"
+                )
+            output_strain = np.asarray(data.value) + resampled_strain
+
         ts = TimeSeries(
             times=target_times,
-            data=resampled_strain,
+            data=output_strain,
             channel=f"{name}:{channel_suffix}",
         )
         output_file = f"{output_prefix}_{name}.gwf"
         ts.write(output_file, format="gwf")
         print(f"Written: {output_file}")
+
+        if name in psds:
+            snr = optimal_snr(resampled_strain, sampling_rate, psds[name])
+            network_snr_sq += snr**2
+            print(f"{name} optimal SNR: {snr:.2f}")
 
         if plots:
             max_str = ts.times[np.argmax(np.abs(np.asarray(ts.data)))].to_value('s')
@@ -290,6 +374,9 @@ def main():
                 bbox_inches="tight",
                 dpi=400,
             )
+
+    if psds:
+        print(f"Network optimal SNR: {np.sqrt(network_snr_sq):.2f}")
 
 
 if __name__ == "__main__":
