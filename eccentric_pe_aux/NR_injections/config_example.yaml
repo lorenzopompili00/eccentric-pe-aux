@@ -1,8 +1,19 @@
-# SXS catalog ID for the NR waveform
+# NR waveform format: "sxs" or "canuda"
+nr_format: "sxs"
+
+# SXS catalog ID for the NR waveform (nr_format: "sxs")
 SXS_ID: "SXS:BBH:3617"
 
-# Time in M units at which the tapering will end
-t_taper: 500 
+# Local waveform file (SXS-format file for "sxs", HDF5 file for "canuda")
+# sim_file: /path/to/q2_mu04_strain.h5
+# Label used in output files and plot titles (default: SXS_ID or the sim_file basename)
+# label: q2_mu04
+
+# Duration in M of the start taper. For "sxs" it starts at the SXS reference
+# time; for "canuda" at t_start (default 100 M, after the junk radiation).
+# Canuda waveforms are shorter (~1000 M), so use a taper below 500 M there.
+t_taper: 500
+# t_start: 100
 
 # Injection parameters
 injection_dict:

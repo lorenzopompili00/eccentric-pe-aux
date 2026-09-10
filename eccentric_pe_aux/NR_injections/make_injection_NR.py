@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """
-Generate frame files for NR injections from SXS catalog, in zero noise,
-Gaussian noise from a PSD, or real detector noise.
+Generate frame files for NR injections, in zero noise, Gaussian noise from a
+PSD, or real detector noise.
 """
 
 import argparse
@@ -19,6 +19,12 @@ from gwpy.timeseries import TimeSeries
 from pycbc.detector import Detector
 from scipy.interpolate import interp1d
 
+from eccentric_pe_aux.NR_injections.canuda_utils import (
+    f22_at,
+    hp_hc_from_modes,
+    load_modes,
+    taper_modes,
+)
 from eccentric_pe_aux.NR_injections.noise import (
     PSD_LENGTH,
     PSD_MAXIMUM_DURATION,
@@ -109,6 +115,52 @@ def hp_hc_NR_phys_units(SXS_ID, injection_dict, t_taper=500, sim_file=None):
     return hp, hc, hpc_times
 
 
+def hp_hc_canuda_phys_units(sim_file, injection_dict, t_start=100, t_taper=200):
+    """Load a Canuda NR waveform and return h+, hx in physical units, with
+    the same conventions as :func:`hp_hc_NR_phys_units`.
+
+    Parameters
+    ----------
+    sim_file : str
+        Path to the HDF5 file (see ``canuda_utils``).
+    injection_dict : dict
+        Must contain ``iota``, ``phase``, ``total_mass`` (Msun),
+        ``luminosity_distance`` (Mpc).
+    t_start : float, optional
+        Retarded time (in M) at which the start taper begins; the waveform is
+        zero before. Default 100 M, after the initial junk radiation.
+    t_taper : float, optional
+        Duration (in M) of the start taper. These waveforms are short, so
+        we keep this below the 500 M used for SXS waveforms.
+
+    Returns
+    -------
+    hp, hc : ndarray
+    hpc_times : ndarray
+        Time array (s), zero at peak amplitude.
+    """
+    iota, phi = injection_dict["iota"], injection_dict["phase"]
+    mtot = injection_dict["total_mass"]
+    dl = injection_dict["luminosity_distance"]
+
+    t, modes, params = load_modes(sim_file)
+    print(f"Loaded {len(modes)} modes, u/M in [{t[0]:.1f}, {t[-1]:.1f}], "
+          f"mu = {params['mu']}, backreaction = {params['backreaction']}")
+
+    t_w, modes_w, t_peak = taper_modes(t, modes, t_start, t_taper)
+    print(f"Peak at u = {t_peak:.1f} M; start taper on [{t_start:.0f}, {t_start + t_taper:.0f}] M")
+    print(f"f_22 at the end of the taper: {f22_at(t, modes, t_start + t_taper, mtot):.1f} Hz "
+          f"(M = {mtot} Msun): use a minimum frequency above this in the PE")
+
+    hp, hc = hp_hc_from_modes(t_w, modes_w, iota, phi)
+    hpc_times = t_w - t_peak
+
+    fac_times = mtot * lal.MTSUN_SI
+    fac_h = (-1) * mtot * lal.MRSUN_SI / (dl * lal.PC_SI * 1e6)
+
+    return hp * fac_h, hc * fac_h, hpc_times * fac_times
+
+
 def compute_detector_times(ifo, inj_dict, hpc_times):
     """Compute time array for a specific detector."""
     deltaT = ifo.time_delay_from_earth_center(
@@ -170,7 +222,7 @@ def load_config(config_file):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Generate NR injection from the SXS catalog"
+        description="Generate NR injection frame files"
     )
     parser.add_argument("config", type=str, help="Path to configuration YAML file")
     args = parser.parse_args()
@@ -179,14 +231,27 @@ def main():
     config = load_config(args.config)
 
     # Extract configuration parameters
-    SXS_ID = config["SXS_ID"]
-    sim_id_label = SXS_ID.replace(":", "_").replace("/", "_")
+    nr_format = config.get("nr_format", "sxs")
+    if nr_format not in ("sxs", "canuda"):
+        raise ValueError(f"Unknown nr_format '{nr_format}' (use 'sxs' or 'canuda')")
     sim_file = config.get("sim_file", None)
+    SXS_ID = config.get("SXS_ID", None)
+    if nr_format == "sxs" and SXS_ID is None:
+        raise ValueError("nr_format 'sxs' requires SXS_ID")
+    if nr_format == "canuda" and sim_file is None:
+        raise ValueError("nr_format 'canuda' requires sim_file")
+    # Label used in file names and plot titles
+    if SXS_ID is not None:
+        sim_label = SXS_ID
+    else:
+        sim_label = config.get("label", os.path.splitext(os.path.basename(sim_file))[0])
+    sim_id_label = config.get("label", sim_label).replace(":", "_").replace("/", "_")
     injection_dict = config["injection_dict"]
     debug = config.get("debug", False)
     plots = config.get("plots", False)
     output_prefix = config.get("output_prefix", sim_id_label)
-    t_taper = config.get("t_taper", 500)
+    t_taper = config.get("t_taper", 500 if nr_format == "sxs" else 200)
+    t_start = config.get("t_start", 100)
     channel_suffix = config.get("channel_suffix", "INJECTED")
     sampling_rate = config.get("sampling_rate", 2048.0)
     post_trigger_duration = config.get("post_trigger_duration", 4.0)
@@ -214,15 +279,20 @@ def main():
     # Create detector objects
     detectors = [Detector(name) for name in detector_names]
 
-    print(f"Generating injection for {SXS_ID}")
+    print(f"Generating injection for {sim_label} (format: {nr_format})")
     print(f"Total mass: {injection_dict['total_mass']} Msun")
     print(f"Luminosity distance: {injection_dict['luminosity_distance']} Mpc")
     print(f"Detectors: {', '.join(detector_names)}")
 
     # Generate h+ and hx in physical units
-    hp, hc, hpc_times = hp_hc_NR_phys_units(
-        SXS_ID, injection_dict, t_taper=t_taper, sim_file=sim_file,
-    )
+    if nr_format == "sxs":
+        hp, hc, hpc_times = hp_hc_NR_phys_units(
+            SXS_ID, injection_dict, t_taper=t_taper, sim_file=sim_file,
+        )
+    else:
+        hp, hc, hpc_times = hp_hc_canuda_phys_units(
+            sim_file, injection_dict, t_start=t_start, t_taper=t_taper,
+        )
 
     if plots:
         plt.plot(hpc_times, hp, label=r'$h_+$')
@@ -230,7 +300,7 @@ def main():
         plt.xlabel(r"$t$ [s]")
         plt.ylabel(r"$h$")
         plt.title(
-            rf"{SXS_ID}, $M = {injection_dict['total_mass']}$, $d_L = {injection_dict['luminosity_distance']}$, $\iota = {injection_dict['iota']}$, $\phi = {injection_dict['phase']}$, $\mathrm{{dec}} = {injection_dict['dec']}$, $\mathrm{{ra}} = {injection_dict['ra']}$",
+            rf"{sim_label}, $M = {injection_dict['total_mass']}$, $d_L = {injection_dict['luminosity_distance']}$, $\iota = {injection_dict['iota']}$, $\phi = {injection_dict['phase']}$, $\mathrm{{dec}} = {injection_dict['dec']}$, $\mathrm{{ra}} = {injection_dict['ra']}$",
             y=1.06,    
         )
         plt.legend()
@@ -366,7 +436,7 @@ def main():
             for ax in axs.flat:
                 ax.grid(alpha=0.2)
             fig.suptitle(
-                rf"{SXS_ID}, $M = {injection_dict['total_mass']}$, $d_L = {injection_dict['luminosity_distance']}$, $\iota = {injection_dict['iota']}$, $\phi = {injection_dict['phase']}$, $\mathrm{{dec}} = {injection_dict['dec']}$, $\mathrm{{ra}} = {injection_dict['ra']}$",
+                rf"{sim_label}, $M = {injection_dict['total_mass']}$, $d_L = {injection_dict['luminosity_distance']}$, $\iota = {injection_dict['iota']}$, $\phi = {injection_dict['phase']}$, $\mathrm{{dec}} = {injection_dict['dec']}$, $\mathrm{{ra}} = {injection_dict['ra']}$",
                 y=1.01,
             )
             plt.savefig(
