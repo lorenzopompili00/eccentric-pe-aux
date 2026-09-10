@@ -236,10 +236,8 @@ def main():
         raise ValueError(f"Unknown nr_format '{nr_format}' (use 'sxs' or 'canuda')")
     sim_file = config.get("sim_file", None)
     SXS_ID = config.get("SXS_ID", None)
-    if nr_format == "sxs" and SXS_ID is None:
-        raise ValueError("nr_format 'sxs' requires SXS_ID")
-    if nr_format == "canuda" and sim_file is None:
-        raise ValueError("nr_format 'canuda' requires sim_file")
+    if sim_file is None and (nr_format == "canuda" or SXS_ID is None):
+        raise ValueError("sim_file is required (or SXS_ID for nr_format 'sxs')")
     # Label used in file names and plot titles
     if SXS_ID is not None:
         sim_label = SXS_ID
