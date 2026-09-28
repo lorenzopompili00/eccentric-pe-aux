@@ -70,6 +70,7 @@ class SEOBNRv6EHM(CompactBinaryCoalescenceGenerator):
             "separation",
             "energy",
             "momentum",
+            "trim_seglen",
         ]
 
         for key in optional_params:
