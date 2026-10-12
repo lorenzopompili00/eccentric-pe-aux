@@ -71,6 +71,7 @@ class SEOBNRv6EHM(CompactBinaryCoalescenceGenerator):
             "energy",
             "momentum",
             "trim_seglen",
+            "t_max",
         ]
 
         for key in optional_params:
