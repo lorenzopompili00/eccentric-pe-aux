@@ -52,10 +52,10 @@ class HyperbolicGWSignalWaveformGenerator(GWSignalWaveformGenerator):
             waveform_approximant = self.waveform_approximant
 
         # Use local pyseobnr plugin instead of the one in lalsimulation
-        _hyperbolic_approxs = {"SEOBNRv6EHM"}
+        _hyperbolic_approxs = {"SEOBNRv6EHM", "SEOBNRv6EPHM"}
         if waveform_approximant in _hyperbolic_approxs:
-            from .gwsignal_plugin import SEOBNRv6EHM
-            _cls = {"SEOBNRv6EHM": SEOBNRv6EHM}
+            from .gwsignal_plugin import SEOBNRv6EHM, SEOBNRv6EPHM
+            _cls = {"SEOBNRv6EHM": SEOBNRv6EHM, "SEOBNRv6EPHM": SEOBNRv6EPHM}
             return _cls[waveform_approximant]()
 
         try:

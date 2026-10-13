@@ -180,3 +180,23 @@ class SEOBNRv6EHM(CompactBinaryCoalescenceGenerator):
 
     def generate_td_modes(self, **parameters):
         return self._generate_modes(**parameters)
+
+
+class SEOBNRv6EPHM(SEOBNRv6EHM):
+
+    """
+    Implements a wrapper for SEOBNRv6EPHM in the pyseobnr package
+
+    Parameters
+    ----------
+
+        No parameters required for initialization.
+
+    """
+
+    @property
+    def metadata(self):
+        metadata = super().metadata
+        metadata["type"] = "precessing_spin"
+        metadata["approximant"] = "SEOBNRv6EPHM"
+        return metadata
