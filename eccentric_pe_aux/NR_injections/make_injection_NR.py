@@ -5,6 +5,7 @@ PSD, or real detector noise.
 """
 
 import argparse
+import json
 import logging
 import warnings
 import yaml
@@ -18,6 +19,7 @@ import sxs
 from gwpy.timeseries import TimeSeries
 from pycbc.detector import Detector
 from scipy.interpolate import interp1d
+from scipy.signal.windows import tukey
 
 from eccentric_pe_aux.NR_injections.canuda_utils import (
     f22_at,
@@ -54,7 +56,9 @@ if __name__ == "__main__":
     mpl.rcdefaults()
 
 
-def hp_hc_NR_phys_units(SXS_ID, injection_dict, t_taper=500, sim_file=None):
+def hp_hc_NR_phys_units(
+    SXS_ID, injection_dict, t_taper=500, sim_file=None, metadata_file=None, reference_time=None
+):
     """Load an SXS waveform and return h+, hx in physical units.
 
     Sums all (ell, m) modes weighted by spin-weighted spherical harmonics,
@@ -69,6 +73,14 @@ def hp_hc_NR_phys_units(SXS_ID, injection_dict, t_taper=500, sim_file=None):
         ``luminosity_distance`` (Mpc).
     t_taper : float, optional
         Duration (in M) over which to apply the start-of-waveform taper.
+    sim_file : str, optional
+        Local SXS-format strain file (e.g. ``Lev4/Strain_N2.h5`` of a
+        simulation not in the public catalog), used instead of ``SXS_ID``.
+    metadata_file : str, optional
+        Metadata of ``sim_file``, for the reference time. Default: the
+        ``metadata.json`` next to ``sim_file``.
+    reference_time : float, optional
+        Start of the taper (in M), overriding the metadata.
 
     Returns
     -------
@@ -82,13 +94,20 @@ def hp_hc_NR_phys_units(SXS_ID, injection_dict, t_taper=500, sim_file=None):
     dl = injection_dict["luminosity_distance"]
 
     if sim_file is not None:
-        wf = sxs.load(sim_file)
-        w = wf
+        w = sxs.load(sim_file)
+        if reference_time is None:
+            if metadata_file is None:
+                metadata_file = os.path.join(
+                    os.path.dirname(os.path.abspath(sim_file)), "metadata.json"
+                )
+            with open(metadata_file) as f:
+                reference_time = json.load(f)["reference_time"]
     else:
         wf = sxs.load(SXS_ID)
         w = wf.h
-
-    reference_time = wf.metadata.reference_time
+        if reference_time is None:
+            reference_time = wf.metadata.reference_time
+    print(f"Reference time (start of the taper): {reference_time:.1f} M")
     reference_index = w.index_closest_to(reference_time)
     w = w[reference_index:, :]
     w = w.preprocess(t1=reference_time, t2=reference_time + t_taper)
@@ -185,6 +204,55 @@ def interpolate_to_grid(t_orig, h_orig, t_new):
     return interp(t_new)
 
 
+def analysis_snr(
+    strain, times, psd, start_time, duration, minimum_frequency, maximum_frequency=None,
+    tukey_roll_off=0.4,
+):
+    """Optimal SNR of the injected strain as seen in a bilby analysis.
+
+    The strain is cut to the analysis segment [start_time, start_time +
+    duration], windowed with the bilby / bilby_pipe Tukey window (``alpha =
+    2 tukey_roll_off / duration``) and the noise-weighted norm is taken over
+    [minimum_frequency, maximum_frequency] with the PSD not rescaled by the
+    window factor, as in ``bilby.gw.detector.Interferometer`` (the old
+    rescaling is only applied with BILBY_INCORRECT_PSD_NORMALIZATION).
+
+    Parameters
+    ----------
+    strain, times : ndarray
+        Strain on a uniform time grid (s).
+    psd : bilby.gw.detector.PowerSpectralDensity
+    start_time, duration : float
+        Analysis segment (s).
+    minimum_frequency : float
+    maximum_frequency : float, optional
+        Default: Nyquist frequency of ``times``.
+    tukey_roll_off : float, optional
+        Roll-off (s) of the Tukey window, bilby_pipe default 0.4 s.
+
+    Returns
+    -------
+    float
+    """
+    sampling_rate = 1 / (times[1] - times[0])
+    n = int(round(duration * sampling_rate))
+    i0 = int(np.searchsorted(times, start_time - 0.5 / sampling_rate))
+    x = strain[i0 : i0 + n]
+    if len(x) < n:
+        raise ValueError("Analysis segment extends beyond the frame data")
+    window = tukey(n, 2 * tukey_roll_off / duration)
+    hf = np.fft.rfft(x * window) / sampling_rate
+    freqs = np.fft.rfftfreq(n, d=1 / sampling_rate)
+    if maximum_frequency is None:
+        maximum_frequency = sampling_rate / 2
+    sn = psd.power_spectral_density_interpolated(freqs)
+    mask = (
+        np.isfinite(sn) & (sn > 0)
+        & (freqs >= minimum_frequency) & (freqs <= maximum_frequency)
+    )
+    return np.sqrt(4 / duration * np.sum(np.abs(hf[mask]) ** 2 / sn[mask]))
+
+
 def compute_interp_error_from_aligned(t_orig, h_orig, t_aligned, h_aligned, label):
     """Compute and plot interpolation error for debugging."""
     os.makedirs("fig", exist_ok=True)
@@ -262,9 +330,24 @@ def main():
     psd_dict = config.get("psd_dict", {}) or {}
     channel_dict = config.get("channel_dict", {}) or {}
     data_dict = config.get("data_dict", {}) or {}
+    # Local SXS-format files: metadata (reference time) next to sim_file by default
+    metadata_file = config.get("metadata_file", None)
+    reference_time = config.get("reference_time", None)
+    # SNR as seen by the analysis (segment, band, Tukey window); with target_snr
+    # the distance is set so that the network optimal SNR equals target_snr
+    target_snr = config.get("target_snr", None)
+    minimum_frequency = config.get("minimum_frequency", 20.0)
+    maximum_frequency = config.get("maximum_frequency", None)
+    tukey_roll_off = config.get("tukey_roll_off", 0.4)
 
     if noise_type not in ("zero", "gaussian", "real"):
         raise ValueError(f"Unknown noise_type '{noise_type}'")
+    if target_snr is not None:
+        missing = [name for name in detector_names if name not in psd_dict]
+        if missing:
+            raise ValueError(f"target_snr needs a psd_dict entry for {missing}")
+        # reference distance, rescaled below
+        injection_dict.setdefault("luminosity_distance", 1000.0)
 
     if plots:
         os.makedirs("fig", exist_ok=True)
@@ -286,27 +369,11 @@ def main():
     if nr_format == "sxs":
         hp, hc, hpc_times = hp_hc_NR_phys_units(
             SXS_ID, injection_dict, t_taper=t_taper, sim_file=sim_file,
+            metadata_file=metadata_file, reference_time=reference_time,
         )
     else:
         hp, hc, hpc_times = hp_hc_canuda_phys_units(
             sim_file, injection_dict, t_start=t_start, t_taper=t_taper,
-        )
-
-    if plots:
-        plt.plot(hpc_times, hp, label=r'$h_+$')
-        plt.plot(hpc_times, hc, label=r'$h_\times$')
-        plt.xlabel(r"$t$ [s]")
-        plt.ylabel(r"$h$")
-        plt.title(
-            rf"{sim_label}, $M = {injection_dict['total_mass']}$, $d_L = {injection_dict['luminosity_distance']}$, $\iota = {injection_dict['iota']}$, $\phi = {injection_dict['phase']}$, $\mathrm{{dec}} = {injection_dict['dec']}$, $\mathrm{{ra}} = {injection_dict['ra']}$",
-            y=1.06,    
-        )
-        plt.legend()
-        plt.grid(alpha=0.3)
-        plt.savefig(
-            f"fig/polarizations_{sim_id_label}.png",
-            bbox_inches="tight",
-            dpi=400,
         )
 
     # Compute detector-specific times and strains
@@ -326,12 +393,81 @@ def main():
     start_sec = end_sec - duration
     target_times = np.arange(start_sec, end_sec, 1 / sampling_rate)
 
-    # Per-detector PSDs used for Gaussian noise
+    resampled_strains = {}
+    for det in detectors:
+        name = det.name
+        resampled_strains[name] = interpolate_to_grid(
+            detector_times[name], detector_strains[name], target_times
+        )
+        if debug:
+            compute_interp_error_from_aligned(
+                detector_times[name],
+                detector_strains[name],
+                target_times,
+                resampled_strains[name],
+                f"{output_prefix}: {name}",
+            )
+
+    # Per-detector PSDs used for Gaussian noise and for the SNR
     psds = {
         name: get_power_spectral_density(name, psd_dict.get(name))
         for name in detector_names
         if noise_type == "gaussian" or name in psd_dict
     }
+
+    # Optimal SNR in the analysis segment and band
+    analysis_start = (
+        injection_dict["geocent_time"] + post_trigger_duration_bilby - duration_bilby
+    )
+
+    def snrs():
+        out = {
+            name: analysis_snr(
+                resampled_strains[name], target_times, psds[name], analysis_start,
+                duration_bilby, minimum_frequency, maximum_frequency, tukey_roll_off,
+            )
+            for name in detector_names
+            if name in psds
+        }
+        if out:
+            out["network"] = float(np.sqrt(sum(v**2 for v in out.values())))
+        return out
+
+    snr = snrs()
+    if target_snr is not None:
+        scale = target_snr / snr["network"]
+        for name in resampled_strains:
+            resampled_strains[name] *= scale
+        hp, hc = hp * scale, hc * scale
+        print(
+            f"Network SNR {snr['network']:.2f} at {injection_dict['luminosity_distance']:.1f} Mpc; "
+            f"rescaled to the target SNR {target_snr}"
+        )
+        injection_dict["luminosity_distance"] = injection_dict["luminosity_distance"] / scale
+        snr = snrs()
+    print(f"Luminosity distance of the injection: {injection_dict['luminosity_distance']:.2f} Mpc")
+    for name, value in snr.items():
+        print(
+            f"{name} optimal SNR (analysis segment, {minimum_frequency}-"
+            f"{maximum_frequency or sampling_rate / 2} Hz): {value:.2f}"
+        )
+
+    if plots:
+        plt.plot(hpc_times, hp, label=r'$h_+$')
+        plt.plot(hpc_times, hc, label=r'$h_\times$')
+        plt.xlabel(r"$t$ [s]")
+        plt.ylabel(r"$h$")
+        plt.title(
+            rf"{sim_label}, $M = {injection_dict['total_mass']}$, $d_L = {injection_dict['luminosity_distance']:.1f}$, $\iota = {injection_dict['iota']}$, $\phi = {injection_dict['phase']}$, $\mathrm{{dec}} = {injection_dict['dec']}$, $\mathrm{{ra}} = {injection_dict['ra']}$",
+            y=1.06,
+        )
+        plt.legend()
+        plt.grid(alpha=0.3)
+        plt.savefig(
+            f"fig/polarizations_{sim_id_label}.png",
+            bbox_inches="tight",
+            dpi=400,
+        )
 
     if noise_type == "gaussian":
         if generation_seed is None:
@@ -345,9 +481,6 @@ def main():
         # before the analysis segment unless an explicit psd-dict is given, so
         # the frames must contain enough data before the trigger for that.
         psd_duration = min(PSD_LENGTH * duration_bilby, PSD_MAXIMUM_DURATION)
-        analysis_start = (
-            injection_dict["geocent_time"] + post_trigger_duration_bilby - duration_bilby
-        )
         if start_sec > analysis_start - psd_duration:
             logger.warning(
                 "Frame data starts at %.0f but downstream off-source PSD "
@@ -362,24 +495,10 @@ def main():
                 end_sec - (analysis_start - psd_duration),
             )
 
-    network_snr_sq = 0.0
-
-    # Resample and write output
+    # Add noise and write output
     for det in detectors:
         name = det.name
-        times = detector_times[name]
-        strain = detector_strains[name]
-
-        resampled_strain = interpolate_to_grid(times, strain, target_times)
-
-        if debug:
-            compute_interp_error_from_aligned(
-                times,
-                strain,
-                target_times,
-                resampled_strain,
-                f"{output_prefix}: {name}",
-            )
+        resampled_strain = resampled_strains[name]
 
         if noise_type == "zero":
             output_strain = resampled_strain
@@ -410,11 +529,6 @@ def main():
         ts.write(output_file, format="gwf")
         print(f"Written: {output_file}")
 
-        if name in psds:
-            snr = optimal_snr(resampled_strain, sampling_rate, psds[name])
-            network_snr_sq += snr**2
-            print(f"{name} optimal SNR: {snr:.2f}")
-
         if plots:
             max_str = ts.times[np.argmax(np.abs(np.asarray(ts.data)))].to_value('s')
             fig, axs = plt.subplots(1, 2, figsize=(12, 4))
@@ -434,7 +548,7 @@ def main():
             for ax in axs.flat:
                 ax.grid(alpha=0.2)
             fig.suptitle(
-                rf"{sim_label}, $M = {injection_dict['total_mass']}$, $d_L = {injection_dict['luminosity_distance']}$, $\iota = {injection_dict['iota']}$, $\phi = {injection_dict['phase']}$, $\mathrm{{dec}} = {injection_dict['dec']}$, $\mathrm{{ra}} = {injection_dict['ra']}$",
+                rf"{sim_label}, $M = {injection_dict['total_mass']}$, $d_L = {injection_dict['luminosity_distance']:.1f}$, $\iota = {injection_dict['iota']}$, $\phi = {injection_dict['phase']}$, $\mathrm{{dec}} = {injection_dict['dec']}$, $\mathrm{{ra}} = {injection_dict['ra']}$",
                 y=1.01,
             )
             plt.savefig(
@@ -443,9 +557,35 @@ def main():
                 dpi=400,
             )
 
-    if psds:
-        print(f"Network optimal SNR: {np.sqrt(network_snr_sq):.2f}")
-
+    # Record of the injection (final distance, SNRs), e.g. to set the PE priors
+    record = dict(
+        simulation=sim_label,
+        nr_format=nr_format,
+        sim_file=sim_file,
+        injection_dict=injection_dict,
+        target_snr=target_snr,
+        optimal_snr=snr,
+        snr_settings=dict(
+            analysis_start=analysis_start,
+            duration=duration_bilby,
+            minimum_frequency=minimum_frequency,
+            maximum_frequency=maximum_frequency or sampling_rate / 2,
+            tukey_roll_off=tukey_roll_off,
+            psd_dict={name: psd_dict.get(name) for name in psds},
+        ),
+        frames=dict(
+            files={det.name: f"{output_prefix}_{det.name}.gwf" for det in detectors},
+            channel_suffix=channel_suffix,
+            sampling_rate=sampling_rate,
+            start_time=float(start_sec),
+            duration=duration,
+            noise_type=noise_type,
+            generation_seed=generation_seed,
+        ),
+    )
+    with open(f"{output_prefix}_injection.json", "w") as f:
+        json.dump(record, f, indent=2)
+    print(f"Written: {output_prefix}_injection.json")
 
 if __name__ == "__main__":
     main()
