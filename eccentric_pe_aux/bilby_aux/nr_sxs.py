@@ -20,11 +20,18 @@ request: https://git.ligo.org/lscsoft/lalsuite/-/merge_requests/2496.
 Usage in config.ini
 --------------------
     waveform-generator = eccentric_pe_aux.bilby_aux.nr_sxs.NRGWSignalWaveformGenerator
-    waveform-generator-constructor-dict = {'sxs_id': 'SXS:BBH:0001'}
+    waveform-generator-constructor-dict = {'sxs_id': 'SXS_BBH_0001v3.0_Lev5'}
     # or: {'sim_file': '/path/to/Strain_N2.h5'}
     waveform_approximant = NR_SXS
 
+bilby_pipe splits constructor-dict values on ':', so in config files write SXS
+IDs with '_' (``SXS_BBH_0001v3.0_Lev5`` for ``SXS:BBH:0001v3.0/Lev5``); the
+generator converts them back.  Pin the version and resolution so that the
+template does not depend on the latest catalog tag when the job runs.
+
 """
+
+import re
 
 import numpy as np
 import lal
@@ -47,6 +54,18 @@ def _value(x, unit):
     return float(x)
 
 
+def _normalize_sxs_id(sxs_id):
+    """Convert a colon-free SXS ID (``SXS_BBH_4000v3.0_Lev3``) to the catalog form
+    (``SXS:BBH:4000v3.0/Lev3``); IDs already in catalog form are returned unchanged."""
+    m = re.fullmatch(
+        r"SXS[:_](BBH|BHNS|NSNS)[:_](\d+)(v[\d.]+)?(?:[/_](Lev-?\d+))?", sxs_id
+    )
+    if m is None:
+        return sxs_id
+    kind, number, version, lev = m.groups()
+    return f"SXS:{kind}:{number}{version or ''}" + (f"/{lev}" if lev else "")
+
+
 class NRWaveformGenerator(CompactBinaryCoalescenceGenerator):
     """gwsignal generator returning a fixed SXS-NR waveform.
 
@@ -61,7 +80,8 @@ class NRWaveformGenerator(CompactBinaryCoalescenceGenerator):
     Parameters
     ----------
     sxs_id : str, optional
-        SXS catalog identifier (e.g. ``"SXS:BBH:0001"``).  Loaded with
+        SXS catalog identifier (e.g. ``"SXS:BBH:0001v3.0/Lev5"``, or
+        ``"SXS_BBH_0001v3.0_Lev5"`` in bilby_pipe configs).  Loaded with
         ``sxs.load(sxs_id).h``.  Give exactly one of ``sxs_id`` / ``sim_file``.
     sim_file : str, optional
         Path to an SXS strain file, loaded with ``sxs.load(sim_file)``.
@@ -97,7 +117,7 @@ class NRWaveformGenerator(CompactBinaryCoalescenceGenerator):
         super().__init__()
         if (sxs_id is None) == (sim_file is None):
             raise ValueError("Provide exactly one of 'sxs_id' or 'sim_file'.")
-        self.sxs_id = sxs_id
+        self.sxs_id = None if sxs_id is None else _normalize_sxs_id(sxs_id)
         self.sim_file = sim_file
         self.t_taper = float(t_taper)
         self.ringdown_keep_M = float(ringdown_keep_M)
